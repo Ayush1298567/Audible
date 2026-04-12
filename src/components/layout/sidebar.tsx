@@ -8,6 +8,7 @@ import { useProgram } from '@/lib/auth/program-context';
 const NAV_ITEMS = [
   { label: 'Hub', href: '/', icon: '⌂' },
   { label: 'Film Room', href: '/film', icon: '▶' },
+  { label: 'Scouting', href: '/scouting', icon: '🔍' },
   { label: 'Games', href: '/games', icon: '📅' },
   { label: 'Roster', href: '/roster', icon: '👥' },
 ] as const;
