@@ -10,7 +10,6 @@ export default defineConfig({
     include: [
       'tests/unit/**/*.test.ts',
       'tests/unit/**/*.test.tsx',
-      'tests/integration/**/*.test.ts',
       'src/**/*.test.ts',
     ],
     exclude: [
@@ -19,6 +18,7 @@ export default defineConfig({
       'tests/e2e/**',
       'tests/evals/**',
       'tests/cv-bench/**',
+      'tests/integration/**',
     ],
     coverage: {
       provider: 'v8',

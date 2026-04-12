@@ -17,6 +17,9 @@
 -- Reference: PLAN.md §5.2
 -- ───────────────────────────────────────────────────────────────
 
+-- Create the app schema first — the helper function lives here.
+CREATE SCHEMA IF NOT EXISTS app;
+
 -- Helper function: read the current program_id from session setting.
 -- Returns NULL if not set, which causes every policy to deny by default.
 CREATE OR REPLACE FUNCTION app.current_program_id()
@@ -26,9 +29,6 @@ CREATE OR REPLACE FUNCTION app.current_program_id()
 AS $$
   SELECT NULLIF(current_setting('app.program_id', true), '')::uuid;
 $$;
-
--- Create the app schema if it doesn't exist yet.
-CREATE SCHEMA IF NOT EXISTS app;
 
 -- ─── Enable RLS on every tenant-scoped table ───────────────────
 
