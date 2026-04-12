@@ -1,0 +1,60 @@
+{
+  "name": "audible",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Football intelligence platform for HS and D-II/D-III college programs.",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "biome lint ./src ./tests",
+    "format": "biome format --write ./src ./tests",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:evals": "vitest run --config vitest.evals.config.ts",
+    "test:cv": "vitest run --config vitest.cv.config.ts",
+    "test:db": "vitest run tests/integration/db",
+    "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "ci": "bun run typecheck && bun run lint && bun run test && bun run test:evals"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^6.0.0",
+    "@vercel/analytics": "^2.0.0",
+    "@vercel/blob": "^1.0.0",
+    "@vercel/functions": "^3.0.0",
+    "@vercel/speed-insights": "^2.0.0",
+    "ai": "^6.0.0",
+    "csv-parse": "^5.6.0",
+    "fast-xml-parser": "^5.0.0",
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "drizzle-orm": "^0.36.0",
+    "next": "^16.0.0",
+    "postgres": "^3.4.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "resend": "^5.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vercel/config": "^1.0.0",
+    "drizzle-kit": "^0.31.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0",
+    "@vitejs/plugin-react": "^5.0.0"
+  },
+  "packageManager": "bun@1.3.10",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

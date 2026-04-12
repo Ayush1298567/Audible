@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Unit + integration tests
+        run: bun run test
+
+  # LLM evals run only when AI code changes, to avoid burning tokens on
+  # unrelated PRs. Path-filtered via the pull_request trigger above.
+  # In Phase 0+ add a separate evals.yml workflow with path filters on
+  # src/lib/ai/** and tests/evals/**. Wired in this file once the eval
+  # harness has its first test.
+  evals:
+    name: LLM evals (placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: verify
+    steps:
+      - name: Skip — no eval tests yet
+        run: echo "Evals wired in Phase 0 once tests/evals has its first case"
