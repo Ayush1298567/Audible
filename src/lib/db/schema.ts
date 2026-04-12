@@ -61,12 +61,26 @@ export const playStatusEnum = pgEnum('play_status', [
 ]);
 
 export const cvTagTypeEnum = pgEnum('cv_tag_type', [
+  // Defense
   'coverage_shell',
   'pressure_type',
   'pressure_source',
   'coverage_disguise',
   'cushion_depth_cb',
   'safety_depth',
+  // Offense
+  'blocking_scheme',
+  'route_concept',
+  'run_gap',
+  'pass_depth_cv',
+  // Per-player
+  'player_positions',
+]);
+
+export const frameTypeEnum = pgEnum('frame_type', [
+  'pre_snap',
+  'snap',
+  'post_snap',
 ]);
 
 export const gamePlanPublishStatusEnum = pgEnum('game_plan_publish_status', [
@@ -367,6 +381,49 @@ export const evalBench = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('eval_bench_program_idx').on(t.programId)],
+);
+
+// ─── Player detections (per-player positions from CV) ───────────
+//
+// One row per player per frame. A single play with 2 frames and 22
+// visible players produces ~44 rows. At 60 plays/game × 10 games/season
+// = ~26k rows/program/season. Postgres handles this easily.
+
+export const playerDetections = pgTable(
+  'player_detections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    playId: uuid('play_id')
+      .notNull()
+      .references(() => plays.id, { onDelete: 'cascade' }),
+    frameType: frameTypeEnum('frame_type').notNull(),
+    // Which side of the ball
+    team: varchar('team', { length: 10 }).notNull(), // 'offense' | 'defense'
+    // Jersey number if readable by the vision model
+    jerseyNumber: integer('jersey_number'),
+    // Position estimate from the vision model
+    positionEstimate: varchar('position_estimate', { length: 10 }),
+    // Approximate field coordinates
+    // x = yard line (0-100, 0 = own end zone, 100 = opponent end zone)
+    // y = lateral position (0-53.3, 0 = near sideline, 53.3 = far sideline)
+    xYards: real('x_yards'),
+    yYards: real('y_yards'),
+    // Depth from line of scrimmage (positive = off the ball, negative = in backfield)
+    depthYards: real('depth_yards'),
+    // Alignment notes from the vision model
+    alignmentNotes: text('alignment_notes'),
+    // Prompt/model tracking
+    promptId: uuid('prompt_id').references(() => prompts.id),
+    ensembleConfidence: real('ensemble_confidence'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('player_detections_program_play_idx').on(t.programId, t.playId),
+    index('player_detections_team_position_idx').on(t.team, t.positionEstimate),
+  ],
 );
 
 // ─── Playbook plays (coach's own plays) ─────────────────────────
