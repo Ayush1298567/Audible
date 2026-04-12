@@ -13,7 +13,11 @@ const config: NextConfig = {
   },
   // ffmpeg runs in route handlers via @ffmpeg-installer/ffmpeg; that package
   // ships a binary that Next.js needs to bundle into the server function.
-  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', 'fluent-ffmpeg'],
+  serverExternalPackages: [
+    '@ffmpeg-installer/ffmpeg',
+    '@ffprobe-installer/ffprobe',
+    'fluent-ffmpeg',
+  ],
   // Image domains: Vercel Blob public CDN (if we ever use public blobs)
   images: {
     remotePatterns: [

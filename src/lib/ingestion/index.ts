@@ -29,3 +29,10 @@ export type { ParseCsvResult } from './parse-csv';
 
 export { parseSportscodeXml, HudlXmlParseError } from './parse-xml';
 export type { ParseXmlResult } from './parse-xml';
+
+export {
+  probeVideoDuration,
+  extractClip,
+  splitAndUploadClips,
+} from './split-clips';
+export type { ClipSplitInput, ClipSplitResult } from './split-clips';
