@@ -2,7 +2,7 @@
   "name": "audible",
   "version": "0.1.0",
   "private": true,
-  "description": "Football intelligence platform for HS and D-II/D-III college programs.",
+  "description": "Football intelligence platform for HS and D-II/D-III college football programs.",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -22,22 +22,22 @@
     "ci": "bun run typecheck && bun run lint && bun run test && bun run test:evals"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.0.0",
+    "@ai-sdk/anthropic": "^3.0.0",
+    "@ai-sdk/openai": "^3.0.0",
+    "@clerk/nextjs": "^7.0.0",
     "@vercel/analytics": "^2.0.0",
-    "@vercel/blob": "^1.0.0",
+    "@vercel/blob": "^2.0.0",
     "@vercel/functions": "^3.0.0",
     "@vercel/speed-insights": "^2.0.0",
     "ai": "^6.0.0",
-    "csv-parse": "^5.6.0",
+    "csv-parse": "^6.0.0",
+    "drizzle-orm": "^0.45.0",
     "fast-xml-parser": "^5.0.0",
-    "@ai-sdk/anthropic": "^2.0.0",
-    "@ai-sdk/openai": "^2.0.0",
-    "drizzle-orm": "^0.36.0",
     "next": "^16.0.0",
     "postgres": "^3.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "resend": "^5.0.0",
+    "resend": "^6.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -46,15 +46,18 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vercel/config": "^1.0.0",
+    "@vercel/config": "^0.1.0",
+    "@vitejs/plugin-react": "^6.0.0",
     "drizzle-kit": "^0.31.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.0.0",
-    "@vitejs/plugin-react": "^5.0.0"
+    "vitest": "^4.0.0"
   },
-  "packageManager": "bun@1.3.10",
+  "packageManager": "bun@1.3.11",
   "engines": {
     "node": ">=22.0.0"
-  }
+  },
+  "trustedDependencies": [
+    "@clerk/shared"
+  ]
 }

@@ -28,16 +28,6 @@ const optionalIntString = (min: number, max: number) =>
     .transform((v) => (v === '' || v == null ? null : Number(v)))
     .pipe(z.number().int().min(min).max(max).nullable());
 
-/**
- * Enum helpers with case-insensitive matching. Hudl has inconsistent
- * casing across program configurations.
- */
-const ciEnum = <T extends [string, ...string[]]>(values: T) =>
-  z
-    .string()
-    .transform((s) => s.trim().toLowerCase())
-    .pipe(z.enum(values.map((v) => v.toLowerCase()) as unknown as T));
-
 // ─── Breakdown CSV row ──────────────────────────────────────────
 
 export const hudlBreakdownRowSchema = z.object({

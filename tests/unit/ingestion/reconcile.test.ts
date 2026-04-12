@@ -43,7 +43,8 @@ describe('reconcileHudlExport', () => {
       const result = reconcileHudlExport({
         csvRaw: [csvRow(1), csvRow(2), csvRow(3)],
         xmlRaw: [xmlSegment(0, 5), xmlSegment(30, 38), xmlSegment(60, 68)],
-        mp4DurationSeconds: 120,
+        // Video ends just past the last segment — no trailing footage warning
+        mp4DurationSeconds: 69,
       });
 
       expect(result.playRows).toHaveLength(3);

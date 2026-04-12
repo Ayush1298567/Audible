@@ -1,5 +1,6 @@
-import { defineConfig, mergeConfig } from 'vitest/config';
-import baseConfig from './vitest.config';
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import path from 'node:path';
 
 /**
  * CV benchmark config. Runs the vision ensemble against the held-out
@@ -12,17 +13,20 @@ import baseConfig from './vitest.config';
  * Run locally: `bun run test:cv`
  * Run in CI: nightly
  */
-export default mergeConfig(
-  baseConfig,
-  defineConfig({
-    test: {
-      include: ['tests/cv-bench/**/*.test.ts'],
-      testTimeout: 120_000,
-      hookTimeout: 60_000,
-      pool: 'threads',
-      poolOptions: {
-        threads: { singleThread: true },
-      },
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'node',
+    globals: false,
+    include: ['tests/cv-bench/**/*.test.ts'],
+    testTimeout: 120_000,
+    hookTimeout: 60_000,
+    fileParallelism: false,
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@/tests': path.resolve(__dirname, './tests'),
     },
-  }),
-);
+  },
+});
