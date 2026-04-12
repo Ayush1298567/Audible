@@ -1,11 +1,23 @@
 import type { Metadata } from 'next';
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { Chakra_Petch, Plus_Jakarta_Sans } from 'next/font/google';
+import { cn } from '@/lib/utils';
 import './globals.css';
-import { Geist } from "next/font/google";
-import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+const display = Chakra_Petch({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-display',
+  display: 'swap',
+});
+
+const body = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-body',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Audible — Football Intelligence',
@@ -18,12 +30,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={cn("font-sans", geist.variable)}>
+    <html lang="en" className={cn('dark', display.variable, body.variable)}>
       <body>
         {children}
-        {/* First-party, privacy-friendly analytics — no cookie banner needed */}
         <Analytics />
-        {/* Real-user Core Web Vitals (LCP, INP, CLS, FCP, TTFB) per route */}
         <SpeedInsights />
       </body>
     </html>
