@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { label: 'Hub', href: '/', icon: '⌂' },
   { label: 'Film Room', href: '/film', icon: '▶' },
   { label: 'Scouting', href: '/scouting', icon: '🔍' },
+  { label: 'Board', href: '/board', icon: '📋' },
   { label: 'Games', href: '/games', icon: '📅' },
   { label: 'Roster', href: '/roster', icon: '👥' },
 ] as const;
