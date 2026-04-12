@@ -1,6 +1,9 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+
+/* TODO: shadcn animation CSS (tw-animate-css + shadcn/tailwind.css)
+   Turbopack can't resolve the "style" export condition from these packages.
+   Components work without them, they just don't animate (accordion, collapsible).
+   Fix: either add Turbopack resolveAlias config or inline the CSS. */
 
 @custom-variant dark (&:is(.dark *));
 
