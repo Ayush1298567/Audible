@@ -467,5 +467,6 @@ export const gamePlans = pgTable(
   (t) => [index('game_plans_program_opponent_idx').on(t.programId, t.opponentId)],
 );
 
-// Re-export game plan extension tables
+// Re-export extension tables
 export { gamePlanPlays, gamePlanAssignments } from './schema-gameplan';
+export { sessions, sessionPlays, playerSessionResults, sessionTypeEnum } from './schema-sessions';
