@@ -13,8 +13,8 @@ const requestSchema = z.object({
   sampleInterval: z.number().int().min(10).max(60).optional(),
 });
 
-// This route does heavy AI work — Vercel Fluid Compute allows up to 800s
-export const maxDuration = 800;
+// Max allowed on Hobby plan is 300s
+export const maxDuration = 300;
 
 export async function POST(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/auto-analyze', method: 'POST' }, req);

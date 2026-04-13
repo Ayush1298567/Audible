@@ -22,7 +22,7 @@ export function AutoAnalyze({ programId, games, onComplete }: AutoAnalyzeProps) 
   const [url, setUrl] = useState('');
   const [gameId, setGameId] = useState('');
   const [startSeconds, setStartSeconds] = useState(0);
-  const [durationMinutes, setDurationMinutes] = useState(10);
+  const [durationMinutes, setDurationMinutes] = useState(5);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
