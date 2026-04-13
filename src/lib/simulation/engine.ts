@@ -235,14 +235,6 @@ function buildDefense(losX: number, coverage: string, pressure: string): PlayerP
       players.push({ id: 'd-cb1', team: 'defense', position: 'CB', jerseyNumber: 1, x: defX + 1, y: y + 20, color });
       players.push({ id: 'd-cb2', team: 'defense', position: 'CB', jerseyNumber: 4, x: defX + 1, y: y - 20, color });
       break;
-    default:
-      // Single high, corners deep third
-      players.push({ id: 'd-fs', team: 'defense', position: 'S', jerseyNumber: 21, x: defX + 14, y, color });
-      players.push({ id: 'd-ss', team: 'defense', position: 'S', jerseyNumber: 24, x: defX + 8, y: y + 10, color });
-      players.push({ id: 'd-cb1', team: 'defense', position: 'CB', jerseyNumber: 1, x: defX + 7, y: y + 20, color });
-      players.push({ id: 'd-cb2', team: 'defense', position: 'CB', jerseyNumber: 4, x: defX + 7, y: y - 20, color });
-      break;
-
     case 'cover_4':
     case 'quarters':
       // Four deep
@@ -250,6 +242,13 @@ function buildDefense(losX: number, coverage: string, pressure: string): PlayerP
       players.push({ id: 'd-ss', team: 'defense', position: 'S', jerseyNumber: 24, x: defX + 12, y: y + 8, color });
       players.push({ id: 'd-cb1', team: 'defense', position: 'CB', jerseyNumber: 1, x: defX + 8, y: y + 20, color });
       players.push({ id: 'd-cb2', team: 'defense', position: 'CB', jerseyNumber: 4, x: defX + 8, y: y - 20, color });
+      break;
+    default:
+      // Single high, corners deep third
+      players.push({ id: 'd-fs', team: 'defense', position: 'S', jerseyNumber: 21, x: defX + 14, y, color });
+      players.push({ id: 'd-ss', team: 'defense', position: 'S', jerseyNumber: 24, x: defX + 8, y: y + 10, color });
+      players.push({ id: 'd-cb1', team: 'defense', position: 'CB', jerseyNumber: 1, x: defX + 7, y: y + 20, color });
+      players.push({ id: 'd-cb2', team: 'defense', position: 'CB', jerseyNumber: 4, x: defX + 7, y: y - 20, color });
       break;
   }
 

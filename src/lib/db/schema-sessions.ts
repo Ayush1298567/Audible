@@ -26,7 +26,43 @@ import { programs, players, plays } from './schema';
 export const sessionTypeEnum = pgEnum('session_type', [
   'film_review',
   'recognition_challenge',
+  'decision_drill',
+  'walkthrough',
+  'quiz',
 ]);
+
+// ─── Scenarios (saved simulation setups) ──────────────────────
+
+export const scenarios = pgTable(
+  'scenarios',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    // Situation parameters
+    down: integer('down').notNull(),
+    distance: integer('distance').notNull(),
+    yardLine: integer('yard_line').notNull(),
+    formation: text('formation').notNull(),
+    // Defense setup
+    coverageShell: varchar('coverage_shell', { length: 20 }),
+    pressureType: varchar('pressure_type', { length: 20 }),
+    // Position mode this scenario targets
+    positionMode: varchar('position_mode', { length: 10 }),
+    // Opponent context (optional — for tendency-driven scenarios)
+    opponentId: uuid('opponent_id'),
+    // Access control
+    accessLevel: varchar('access_level', { length: 10 }).notNull().default('open'), // open | assigned | locked
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('scenarios_program_idx').on(t.programId),
+    index('scenarios_program_position_idx').on(t.programId, t.positionMode),
+  ],
+);
 
 export const sessions = pgTable(
   'sessions',
@@ -102,5 +138,31 @@ export const playerSessionResults = pgTable(
   (t) => [
     index('player_session_results_session_idx').on(t.sessionId),
     index('player_session_results_player_idx').on(t.playerId),
+  ],
+);
+
+// ─── Film Grades (1/0 per play per player) ────────────────────
+
+export const filmGrades = pgTable(
+  'film_grades',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    playId: uuid('play_id')
+      .notNull()
+      .references(() => plays.id, { onDelete: 'cascade' }),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    grade: integer('grade').notNull(), // 1 = did their job, 0 = didn't
+    gradedBy: text('graded_by'), // coach clerk user ID
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('film_grades_program_play_idx').on(t.programId, t.playId),
+    index('film_grades_player_idx').on(t.playerId),
   ],
 );
