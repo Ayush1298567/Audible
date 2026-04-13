@@ -16,6 +16,7 @@ import {
 import { DrawingCanvas } from '@/components/film/drawing-canvas';
 import { CorrectableTag } from '@/components/film/tag-correction';
 import { CollectionsPanel } from '@/components/film/collections-panel';
+import { YouTubeImport } from '@/components/film/youtube-import';
 
 interface Play {
   id: string;
@@ -54,6 +55,7 @@ export default function FilmRoomPage() {
 
   // Collections
   const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState<'hudl' | 'youtube'>('youtube');
 
   // Filters
   const [filterDown, setFilterDown] = useState<string>('all');
@@ -188,14 +190,34 @@ export default function FilmRoomPage() {
         {/* Gradient divider */}
         <div className="h-px bg-gradient-to-r from-blue-500/50 via-cyan-500/30 to-transparent" />
 
-        {/* Upload section */}
-        {games.length > 0 && (
+        {/* Import section */}
+        {/* Import mode toggle */}
+        <div className="flex gap-1 rounded-lg border border-slate-700/50 bg-slate-900/60 p-0.5 w-fit">
+          <button type="button" onClick={() => setImportMode('youtube')}
+            className={`px-3 py-1.5 rounded-md font-display text-[10px] uppercase tracking-wider transition-all ${importMode === 'youtube' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+            YouTube Import
+          </button>
+          <button type="button" onClick={() => setImportMode('hudl')}
+            className={`px-3 py-1.5 rounded-md font-display text-[10px] uppercase tracking-wider transition-all ${importMode === 'hudl' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+            Hudl Upload
+          </button>
+        </div>
+
+        {/* YouTube import */}
+        {importMode === 'youtube' && programId && (
+          <YouTubeImport
+            programId={programId}
+            games={games.map(g => ({ id: g.id, opponentName: g.opponentName }))}
+            onComplete={() => void loadPlays()}
+          />
+        )}
+
+        {/* Hudl upload section */}
+        {importMode === 'hudl' && games.length > 0 && (
           <div className="glass-card rounded-xl p-5 relative overflow-hidden noise-overlay">
-            {/* Decorative dashed dropzone border accent */}
             <div className="absolute inset-2 rounded-lg border border-dashed border-blue-500/20 pointer-events-none" />
 
             <div className="relative z-10">
-              {/* Upload header */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20">
                   <svg className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -439,16 +461,32 @@ export default function FilmRoomPage() {
 
           {/* Video player with drawing overlay */}
           {selectedPlay.clipBlobKey ? (
-            <div className="video-container glow-blue relative">
-              {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
-              <video
-                key={selectedPlay.id}
-                controls
-                autoPlay
-                src={selectedPlay.clipBlobKey}
-              />
-              <DrawingCanvas width={640} height={360} />
-            </div>
+            selectedPlay.clipBlobKey.includes('youtube.com') ? (
+              <div className="video-container glow-blue relative rounded-xl overflow-hidden">
+                <iframe
+                  key={selectedPlay.id}
+                  width="100%"
+                  height="240"
+                  src={selectedPlay.clipBlobKey}
+                  title={`Play #${selectedPlay.playOrder}`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
+                  allowFullScreen
+                  className="rounded-xl"
+                />
+                <DrawingCanvas width={640} height={360} />
+              </div>
+            ) : (
+              <div className="video-container glow-blue relative">
+                {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
+                <video
+                  key={selectedPlay.id}
+                  controls
+                  autoPlay
+                  src={selectedPlay.clipBlobKey}
+                />
+                <DrawingCanvas width={640} height={360} />
+              </div>
+            )
           ) : (
             <div className="flex h-44 items-center justify-center rounded-xl bg-slate-900/60 border border-slate-700/30">
               <div className="text-center">
