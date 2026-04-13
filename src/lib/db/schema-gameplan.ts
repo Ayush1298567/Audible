@@ -14,7 +14,7 @@
  */
 
 import { index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
-import { programs, gamePlans, playbookPlays } from './schema';
+import { programs, gamePlans, playbookPlays, opponents } from './schema';
 
 // ─── Game plan plays (plays assigned to situation columns) ──
 
@@ -74,5 +74,27 @@ export const gamePlanAssignments = pgTable(
   (t) => [
     index('game_plan_assignments_plan_idx').on(t.gamePlanId),
     index('game_plan_assignments_program_idx').on(t.programId),
+  ],
+);
+
+// ─── Dismissals (suggestion learning) ─────────────────────────
+
+export const suggestionDismissals = pgTable(
+  'suggestion_dismissals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    opponentId: uuid('opponent_id')
+      .references(() => opponents.id, { onDelete: 'set null' }),
+    situation: varchar('situation', { length: 50 }).notNull(),
+    playName: text('play_name').notNull(),
+    formation: text('formation'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('dismissals_program_idx').on(t.programId),
+    index('dismissals_program_opponent_idx').on(t.programId, t.opponentId),
   ],
 );

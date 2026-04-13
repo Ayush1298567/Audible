@@ -1,6 +1,6 @@
 import { withProgramContext } from '@/lib/db/client';
 import { gamePlans } from '@/lib/db/schema';
-import { gamePlanPlays } from '@/lib/db/schema-gameplan';
+import { gamePlanPlays, suggestionDismissals } from '@/lib/db/schema-gameplan';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, } from 'drizzle-orm';
 import { z } from 'zod';
@@ -81,6 +81,29 @@ export async function POST(req: Request): Promise<Response> {
         });
         span.done({ suggestionCount: suggestions.length });
         return Response.json({ suggestions });
+      }
+
+      case 'dismiss': {
+        const dismissInput = z.object({
+          programId: z.string().uuid(),
+          opponentId: z.string().uuid(),
+          situation: z.string().min(1),
+          playName: z.string().min(1),
+          formation: z.string().optional(),
+        }).parse(body);
+
+        await withProgramContext(dismissInput.programId, async (tx) =>
+          tx.insert(suggestionDismissals).values({
+            programId: dismissInput.programId,
+            opponentId: dismissInput.opponentId,
+            situation: dismissInput.situation,
+            playName: dismissInput.playName,
+            formation: dismissInput.formation ?? null,
+          }),
+        );
+
+        span.done({ action: 'dismiss', playName: dismissInput.playName });
+        return Response.json({ dismissed: true });
       }
 
       case 'publish': {
