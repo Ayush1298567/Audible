@@ -20,7 +20,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/health(.*)',
   '/api/player-auth(.*)',
   '/api/programs',
-  '/api/test-ai',
+  '/api/auto-analyze',
   '/dev',
   '/_next(.*)',
 ]);
