@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { ClerkProvider } from '@clerk/nextjs';
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Chakra_Petch, Plus_Jakarta_Sans } from 'next/font/google';
@@ -32,7 +33,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn('dark', display.variable, body.variable)}>
       <body>
-        {children}
+        <ClerkProvider>
+          {children}
+        </ClerkProvider>
         <Analytics />
         <SpeedInsights />
       </body>

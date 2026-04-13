@@ -8,15 +8,14 @@ import type { NextConfig } from 'next';
 const config: NextConfig = {
   // Cache Components (Next.js 16): explicit cache boundaries via `use cache`
   // and cacheLife, replaces the old unstable_cache patterns.
-  experimental: {
-    cacheComponents: true,
-  },
+  cacheComponents: true,
   // ffmpeg runs in route handlers via @ffmpeg-installer/ffmpeg; that package
   // ships a binary that Next.js needs to bundle into the server function.
   serverExternalPackages: [
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
     'fluent-ffmpeg',
+    '@react-pdf/renderer',
   ],
   // Image domains: Vercel Blob public CDN (if we ever use public blobs)
   images: {

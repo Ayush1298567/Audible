@@ -1,43 +1,40 @@
 /**
- * Next.js proxy (Next.js 16+, formerly middleware.ts).
+ * Next.js 16 proxy (middleware) — Clerk auth + security headers.
  *
- * Runs on every request before routing. Phase 0 responsibilities:
- *   1. Attach security headers to every response
+ * Public routes: /, /sign-in, /sign-up, /join, /api/health, /api/player-auth
+ * Everything else requires authentication via Clerk.
  *
- * Phase 1 will replace this file with Clerk's auth proxy wrapped
- * in a matcher that distinguishes coach routes, player routes, and
- * public routes. See PLAN.md §5.1.
- *
- * Next.js 16 renamed middleware.ts → proxy.ts:
- *   - File:     middleware.ts     → proxy.ts
- *   - Function: middleware()      → proxy()
- *   - Config:   config            → proxyConfig
+ * In Next.js 16, middleware.ts was renamed to proxy.ts:
+ *   - Export: proxy() instead of middleware()
+ *   - Config: proxyConfig instead of config
  */
 
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
-const SECURITY_HEADERS: Record<string, string> = {
-  'X-Frame-Options': 'DENY',
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'camera=(), microphone=(self), geolocation=()',
-  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
-};
+const isPublicRoute = createRouteMatcher([
+  '/',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/join(.*)',
+  '/setup(.*)',
+  '/api/health(.*)',
+  '/api/player-auth(.*)',
+]);
 
-export function proxy(_req: NextRequest): NextResponse {
-  const response = NextResponse.next();
+export const proxy = clerkMiddleware(async (auth, request) => {
+  // Security headers on every response
+  const headers = new Headers();
+  headers.set('X-Frame-Options', 'DENY');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
-  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
-    response.headers.set(key, value);
+  if (!isPublicRoute(request)) {
+    await auth.protect();
   }
-
-  return response;
-}
+});
 
 export const proxyConfig = {
   matcher: [
-    // Run on all routes except static assets and Next.js internals.
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

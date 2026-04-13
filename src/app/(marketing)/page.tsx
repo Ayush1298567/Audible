@@ -42,7 +42,7 @@ export default function LandingPage() {
         {/* CTA buttons */}
         <div className="animate-fade-in stagger-4 mt-10 flex flex-col items-center gap-4 sm:flex-row">
           <Link
-            href="/setup"
+            href="/sign-up"
             className="group inline-flex items-center gap-3 rounded-xl bg-primary px-8 py-4 font-display text-sm font-bold uppercase tracking-widest text-white shadow-xl shadow-primary/25 transition-all duration-300 hover:bg-primary/90 hover:shadow-primary/40 hover:scale-[1.03] active:scale-[0.98]"
           >
             Get Started Free
@@ -262,7 +262,7 @@ export default function LandingPage() {
 
           <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
-              href="/setup"
+              href="/sign-up"
               className="group inline-flex items-center gap-3 rounded-xl bg-primary px-10 py-5 font-display text-sm font-bold uppercase tracking-widest text-white shadow-2xl shadow-primary/30 transition-all duration-300 hover:bg-primary/90 hover:shadow-primary/50 hover:scale-[1.03] active:scale-[0.98]"
             >
               Get Started Free
