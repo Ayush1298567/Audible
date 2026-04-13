@@ -539,6 +539,50 @@ export default function FilmRoomPage() {
             <TagRow label="Quarter" value={selectedPlay.quarter ? `Q${selectedPlay.quarter}` : null} />
             <TagRow label="Opponent" value={selectedPlay.opponentName} />
           </div>
+
+          {/* AI Analysis (shown when AI has analyzed this play) */}
+          {selectedPlay.coachOverride?.aiCoverage && (
+            <div className="glass-card rounded-xl p-4 space-y-2 border-l-2 border-l-cyan-500/50">
+              <div className="flex items-center justify-between">
+                <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400">
+                  AI Film Analysis
+                </p>
+                <span className={`tag-chip text-[10px] ${
+                  Number(selectedPlay.coachOverride.aiConfidence ?? 0) >= 0.7 ? 'tag-positive' : 'tag-warning'
+                }`}>
+                  {Math.round(Number(selectedPlay.coachOverride.aiConfidence ?? 0) * 100)}% confidence
+                </span>
+              </div>
+
+              <TagRow label="Coverage" value={selectedPlay.coachOverride.aiCoverage?.replace(/_/g, ' ')} highlight />
+              {selectedPlay.coachOverride.aiDefenseFormation && (
+                <TagRow label="Defense" value={selectedPlay.coachOverride.aiDefenseFormation} />
+              )}
+              {selectedPlay.coachOverride.aiPersonnel && (
+                <TagRow label="Personnel" value={selectedPlay.coachOverride.aiPersonnel} />
+              )}
+              {selectedPlay.coachOverride.aiPressure && (
+                <TagRow label="Pressure" value={selectedPlay.coachOverride.aiPressure?.replace(/_/g, ' ')} />
+              )}
+
+              {selectedPlay.coachOverride.aiReasoning && (
+                <div className="pt-2 border-t border-slate-800/50">
+                  <p className="text-[10px] text-cyan-400/70 leading-relaxed">
+                    {selectedPlay.coachOverride.aiReasoning}
+                  </p>
+                </div>
+              )}
+
+              {selectedPlay.coachOverride.aiObservations && (
+                <div className="pt-2 border-t border-slate-800/50">
+                  <p className="font-display text-[10px] uppercase tracking-widest text-slate-500 mb-1">Key Observations</p>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    {selectedPlay.coachOverride.aiObservations}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

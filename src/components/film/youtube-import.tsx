@@ -102,6 +102,7 @@ export function YouTubeImport({ programId, games, onComplete }: YouTubeImportPro
           gameId: selectedGameId,
           videoId,
           plays: markedPlays,
+          runAiAnalysis: true,
         }),
       });
 
@@ -115,7 +116,7 @@ export function YouTubeImport({ programId, games, onComplete }: YouTubeImportPro
       setMarkedPlays([]);
       setVideoId(null);
       setUrl('');
-      alert(`Imported ${data.playCount} plays from YouTube!`);
+      alert(data.message ?? `Imported ${data.playCount} plays!`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -252,7 +253,7 @@ export function YouTubeImport({ programId, games, onComplete }: YouTubeImportPro
                   </Button>
                   <Button onClick={handleSave} disabled={isSaving} size="sm"
                     className="bg-primary hover:bg-primary/90 font-display text-[10px] uppercase tracking-widest">
-                    {isSaving ? 'Saving...' : `Save ${markedPlays.length} Plays`}
+                    {isSaving ? 'Saving + AI analyzing...' : `Save & AI Analyze (${markedPlays.length} plays)`}
                   </Button>
                 </div>
               </div>
