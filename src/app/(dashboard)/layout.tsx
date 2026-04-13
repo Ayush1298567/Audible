@@ -1,20 +1,64 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, Suspense } from 'react';
 import { ProgramProvider, useProgram } from '@/lib/auth/program-context';
 import { Sidebar } from '@/components/layout/sidebar';
 import { CommandBar } from '@/components/layout/command-bar';
 
+/**
+ * Dev mode: add ?dev=true to any dashboard URL to auto-create a
+ * test program and skip the setup flow. Standard SaaS dev pattern.
+ *
+ * Examples:
+ *   /hub?dev=true
+ *   /film?dev=true
+ *   /scouting?dev=true
+ *
+ * This only creates a program if one doesn't already exist.
+ * In production, swap this for real auth (Clerk).
+ */
+
 function DashboardGuard({ children }: { children: React.ReactNode }) {
-  const { programId, isLoading } = useProgram();
+  const { programId, isLoading, setProgramId } = useProgram();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (!isLoading && !programId) {
+    if (isLoading) return;
+
+    // Dev mode: auto-create a test program
+    const isDevMode = searchParams.get('dev') === 'true';
+
+    if (!programId && isDevMode) {
+      fetch('/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Dev Test Program',
+          level: 'hs',
+          city: 'Dev',
+          state: 'TX',
+          seasonYear: new Date().getFullYear(),
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.program) {
+            setProgramId(data.program.id, data.program.name);
+          }
+        })
+        .catch(() => {
+          // If auto-create fails, fall back to setup
+          router.replace('/setup');
+        });
+      return;
+    }
+
+    if (!programId) {
       router.replace('/setup');
     }
-  }, [programId, isLoading, router]);
+  }, [programId, isLoading, router, searchParams, setProgramId]);
 
   if (isLoading) {
     return (
@@ -51,7 +95,9 @@ export default function DashboardLayout({
 }) {
   return (
     <ProgramProvider>
-      <DashboardGuard>{children}</DashboardGuard>
+      <Suspense fallback={null}>
+        <DashboardGuard>{children}</DashboardGuard>
+      </Suspense>
     </ProgramProvider>
   );
 }
