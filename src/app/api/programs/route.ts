@@ -1,7 +1,28 @@
 import { db } from '@/lib/db/client';
 import { programs, seasons } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
+import { desc } from 'drizzle-orm';
 import { z } from 'zod';
+
+// ─── GET: List all programs (no RLS — programs table is unscoped) ──
+
+export async function GET(req: Request): Promise<Response> {
+  const span = beginSpan({ route: '/api/programs', method: 'GET' }, req);
+
+  try {
+    const result = await db
+      .select({ id: programs.id, name: programs.name, level: programs.level })
+      .from(programs)
+      .orderBy(desc(programs.id))
+      .limit(10);
+
+    span.done({ count: result.length });
+    return Response.json({ programs: result });
+  } catch (error) {
+    span.fail(error);
+    return Response.json({ error: 'Failed to fetch programs' }, { status: 500 });
+  }
+}
 
 const createProgramSchema = z.object({
   name: z.string().min(1).max(200),

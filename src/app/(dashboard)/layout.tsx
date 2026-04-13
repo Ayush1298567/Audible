@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState, Suspense } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { ProgramProvider, useProgram } from '@/lib/auth/program-context';
@@ -23,43 +23,27 @@ function DashboardGuard({ children }: { children: React.ReactNode }) {
   const { programId, isLoading, setProgramId } = useProgram();
   const { isLoaded: isUserLoaded } = useUser();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (isLoading || !isUserLoaded) return;
+    if (programId) return; // already set
 
-    // Dev mode: auto-create a test program
-    const isDevMode = searchParams.get('dev') === 'true';
-
-    if (!programId && isDevMode) {
-      fetch('/api/programs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'Dev Test Program',
-          level: 'hs',
-          city: 'Dev',
-          state: 'TX',
-          seasonYear: new Date().getFullYear(),
-        }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.program) {
-            setProgramId(data.program.id, data.program.name);
-          }
-        })
-        .catch(() => {
+    // Try to auto-load an existing program before redirecting to setup
+    fetch('/api/programs')
+      .then((res) => res.json())
+      .then((data) => {
+        const existing = data.programs?.[0];
+        if (existing) {
+          setProgramId(existing.id, existing.name);
+        } else {
           router.replace('/setup');
-        });
-      return;
-    }
-
-    if (!programId) {
-      router.replace('/setup');
-    }
-  }, [programId, isLoading, isUserLoaded, router, searchParams, setProgramId]);
+        }
+      })
+      .catch(() => {
+        router.replace('/setup');
+      });
+  }, [programId, isLoading, isUserLoaded, router, setProgramId]);
 
   if (isLoading || !isUserLoaded) {
     return (
