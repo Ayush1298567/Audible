@@ -13,6 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { DrawingCanvas } from '@/components/film/drawing-canvas';
+import { CorrectableTag } from '@/components/film/tag-correction';
+import { CollectionsPanel } from '@/components/film/collections-panel';
 
 interface Play {
   id: string;
@@ -30,6 +33,7 @@ interface Play {
   result: string | null;
   clipBlobKey: string | null;
   status: string;
+  coachOverride: Record<string, string> | null;
   opponentName: string | null;
 }
 
@@ -47,6 +51,9 @@ export default function FilmRoomPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+
+  // Collections
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
 
   // Filters
   const [filterDown, setFilterDown] = useState<string>('all');
@@ -66,11 +73,12 @@ export default function FilmRoomPage() {
     setIsLoading(true);
     const params = new URLSearchParams({ programId });
     if (selectedGameId) params.set('gameId', selectedGameId);
+    if (activeCollectionId) params.set('collectionId', activeCollectionId);
     const res = await fetch(`/api/plays?${params}`);
     const data = await res.json();
     setPlays(data.plays ?? []);
     setIsLoading(false);
-  }, [programId, selectedGameId]);
+  }, [programId, selectedGameId, activeCollectionId]);
 
   useEffect(() => { void loadGames(); }, [loadGames]);
   useEffect(() => { void loadPlays(); }, [loadPlays]);
@@ -114,6 +122,29 @@ export default function FilmRoomPage() {
       setUploadProgress(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  // Tag correction handler
+  async function handleTagCorrection(field: string, value: string) {
+    if (!programId || !selectedPlay) return;
+    const res = await fetch('/api/plays', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ programId, playId: selectedPlay.id, field, value }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      // Update local state with new override
+      setSelectedPlay((prev) =>
+        prev ? { ...prev, coachOverride: data.play.coachOverride } : prev,
+      );
+      // Also update in the plays list
+      setPlays((prev) =>
+        prev.map((p) =>
+          p.id === selectedPlay.id ? { ...p, coachOverride: data.play.coachOverride } : p,
+        ),
+      );
     }
   }
 
@@ -318,6 +349,18 @@ export default function FilmRoomPage() {
           </div>
         )}
 
+        {/* Collections */}
+        {programId && (
+          <CollectionsPanel
+            programId={programId}
+            selectedPlayId={selectedPlay?.id ?? null}
+            onFilterByCollection={(id) => {
+              setActiveCollectionId(id);
+            }}
+            activeCollectionId={activeCollectionId}
+          />
+        )}
+
         {/* Play grid */}
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
@@ -394,9 +437,9 @@ export default function FilmRoomPage() {
           {/* Gradient divider */}
           <div className="h-px bg-gradient-to-r from-blue-500/40 via-cyan-500/20 to-transparent" />
 
-          {/* Video player */}
+          {/* Video player with drawing overlay */}
           {selectedPlay.clipBlobKey ? (
-            <div className="video-container glow-blue">
+            <div className="video-container glow-blue relative">
               {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
               <video
                 key={selectedPlay.id}
@@ -404,6 +447,7 @@ export default function FilmRoomPage() {
                 autoPlay
                 src={selectedPlay.clipBlobKey}
               />
+              <DrawingCanvas width={640} height={360} />
             </div>
           ) : (
             <div className="flex h-44 items-center justify-center rounded-xl bg-slate-900/60 border border-slate-700/30">
@@ -418,9 +462,17 @@ export default function FilmRoomPage() {
             </div>
           )}
 
-          {/* Play data tags */}
+          {/* Play data tags — correctable fields use 2-tap correction */}
           <div className="glass-card rounded-xl p-4 space-y-1">
-            <p className="font-display text-[10px] uppercase tracking-widest text-slate-500 mb-3">Play Details</p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-display text-[10px] uppercase tracking-widest text-slate-500">Play Details</p>
+              {selectedPlay.coachOverride && Object.keys(selectedPlay.coachOverride).length > 0 && (
+                <span className="flex items-center gap-1 text-[10px] text-amber-400">
+                  <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  Corrected
+                </span>
+              )}
+            </div>
 
             <TagRow
               label="Down & Distance"
@@ -431,10 +483,10 @@ export default function FilmRoomPage() {
               }
               highlight
             />
-            <TagRow label="Formation" value={selectedPlay.formation} />
-            <TagRow label="Personnel" value={selectedPlay.personnel} />
-            <TagRow label="Play Type" value={selectedPlay.playType} />
-            <TagRow label="Direction" value={selectedPlay.playDirection} />
+            <CorrectableTag field="formation" label="Formation" value={selectedPlay.formation} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
+            <CorrectableTag field="personnel" label="Personnel" value={selectedPlay.personnel} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
+            <CorrectableTag field="playType" label="Play Type" value={selectedPlay.playType} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
+            <CorrectableTag field="playDirection" label="Direction" value={selectedPlay.playDirection} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
             <TagRow
               label="Gain / Loss"
               value={
@@ -444,8 +496,8 @@ export default function FilmRoomPage() {
               }
               gainLoss={selectedPlay.gainLoss}
             />
-            <TagRow label="Result" value={selectedPlay.result} />
-            <TagRow label="Hash" value={selectedPlay.hash} />
+            <CorrectableTag field="result" label="Result" value={selectedPlay.result} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
+            <CorrectableTag field="hash" label="Hash" value={selectedPlay.hash} coachOverride={selectedPlay.coachOverride} onCorrect={handleTagCorrection} />
             <TagRow label="Quarter" value={selectedPlay.quarter ? `Q${selectedPlay.quarter}` : null} />
             <TagRow label="Opponent" value={selectedPlay.opponentName} />
           </div>

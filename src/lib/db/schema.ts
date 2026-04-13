@@ -282,6 +282,10 @@ export const plays = pgTable(
     // ── Processing state ─────────────────────────────────────
     status: playStatusEnum('status').notNull().default('awaiting_clip'),
 
+    // ── Coach overrides (2-tap tag corrections) ──────────────
+    // JSON object of field → corrected value, e.g. { formation: "Trips Rt" }
+    coachOverride: jsonb('coach_override'),
+
     // ── Raw Hudl CSV row (for debugging / schema evolution) ──
     rawCsvRow: jsonb('raw_csv_row'),
 
@@ -467,6 +471,41 @@ export const gamePlans = pgTable(
   (t) => [index('game_plans_program_opponent_idx').on(t.programId, t.opponentId)],
 );
 
+// ─── Collections (named clip packages) ─────────────────────────
+
+export const collections = pgTable(
+  'collections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('collections_program_idx').on(t.programId)],
+);
+
+export const collectionPlays = pgTable(
+  'collection_plays',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    playId: uuid('play_id')
+      .notNull()
+      .references(() => plays.id, { onDelete: 'cascade' }),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('collection_plays_collection_idx').on(t.collectionId),
+    index('collection_plays_play_idx').on(t.playId),
+  ],
+);
+
 // Re-export extension tables
-export { gamePlanPlays, gamePlanAssignments } from './schema-gameplan';
-export { sessions, sessionPlays, playerSessionResults, sessionTypeEnum } from './schema-sessions';
+export { gamePlanPlays, gamePlanAssignments, suggestionDismissals } from './schema-gameplan';
+export { sessions, sessionPlays, playerSessionResults, sessionTypeEnum, scenarios, filmGrades } from './schema-sessions';
