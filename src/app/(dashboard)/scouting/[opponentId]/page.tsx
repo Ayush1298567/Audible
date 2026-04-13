@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useProgram } from '@/lib/auth/program-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ReportViewer } from '@/components/scouting/report-viewer';
 import type { TendencyBreakdown } from '@/lib/tendencies/queries';
+import type { DriveAnalysis } from '@/lib/tendencies/drive-analysis';
+import type { OpponentPlaybook } from '@/lib/tendencies/playbook-extraction';
 
 interface OverviewData {
   formation: TendencyBreakdown;
@@ -21,19 +24,28 @@ export default function OpponentScoutingPage() {
   const { programId } = useProgram();
   const [data, setData] = useState<OverviewData | null>(null);
   const [selfScout, setSelfScout] = useState<TendencyBreakdown[]>([]);
+  const [opponentName, setOpponentName] = useState<string>('');
+  const [driveData, setDriveData] = useState<DriveAnalysis | null>(null);
+  const [isDriveLoading, setIsDriveLoading] = useState(false);
+  const [playbookData, setPlaybookData] = useState<OpponentPlaybook | null>(null);
+  const [isPlaybookLoading, setIsPlaybookLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!programId || !opponentId) return;
     try {
-      const [overviewRes, selfScoutRes] = await Promise.all([
+      const [overviewRes, selfScoutRes, opponentsRes] = await Promise.all([
         fetch(`/api/tendencies?programId=${programId}&opponentId=${opponentId}&type=overview`),
         fetch(`/api/tendencies?programId=${programId}&type=selfScout`),
+        fetch(`/api/opponents?programId=${programId}`),
       ]);
       const overviewData = await overviewRes.json();
       const selfScoutData = await selfScoutRes.json();
+      const opponentsData = await opponentsRes.json();
       setData(overviewData);
       setSelfScout(selfScoutData.alerts ?? []);
+      const opp = (opponentsData.opponents ?? []).find((o: { id: string }) => o.id === opponentId);
+      setOpponentName(opp?.name ?? 'Unknown');
     } catch {
       // handled by empty state
     } finally {
@@ -42,6 +54,34 @@ export default function OpponentScoutingPage() {
   }, [programId, opponentId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function loadDriveData() {
+    if (driveData || isDriveLoading || !programId) return;
+    setIsDriveLoading(true);
+    try {
+      const res = await fetch(`/api/tendencies?programId=${programId}&opponentId=${opponentId}&type=driveAnalysis`);
+      const data = await res.json();
+      setDriveData(data);
+    } catch {
+      // handled by empty state
+    } finally {
+      setIsDriveLoading(false);
+    }
+  }
+
+  async function loadPlaybookData() {
+    if (playbookData || isPlaybookLoading || !programId) return;
+    setIsPlaybookLoading(true);
+    try {
+      const res = await fetch(`/api/tendencies?programId=${programId}&opponentId=${opponentId}&type=opponentPlaybook`);
+      const data = await res.json();
+      setPlaybookData(data);
+    } catch {
+      // handled by empty state
+    } finally {
+      setIsPlaybookLoading(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -117,6 +157,26 @@ export default function OpponentScoutingPage() {
           >
             Self-Scout
           </TabsTrigger>
+          <TabsTrigger
+            value="playbook"
+            className="font-display text-xs uppercase tracking-wider rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+            onClick={loadPlaybookData}
+          >
+            Playbook
+          </TabsTrigger>
+          <TabsTrigger
+            value="drives"
+            className="font-display text-xs uppercase tracking-wider rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+            onClick={loadDriveData}
+          >
+            Drives
+          </TabsTrigger>
+          <TabsTrigger
+            value="report"
+            className="font-display text-xs uppercase tracking-wider rounded-lg data-[state=active]:bg-cyan-600 data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+          >
+            Report
+          </TabsTrigger>
         </TabsList>
 
         {/* Tendencies tab */}
@@ -182,6 +242,144 @@ export default function OpponentScoutingPage() {
                 <SelfScoutAlert breakdown={alert} />
               </div>
             ))
+          )}
+        </TabsContent>
+
+        {/* Playbook tab */}
+        <TabsContent value="playbook" className="space-y-4 pt-6">
+          {isPlaybookLoading ? (
+            <div className="flex items-center gap-3 py-8">
+              <svg className="h-4 w-4 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              <p className="font-display text-sm uppercase tracking-widest text-slate-500">
+                Extracting opponent playbook...
+              </p>
+            </div>
+          ) : playbookData ? (
+            <div className="space-y-4">
+              {/* Stats bar */}
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="stat-number text-2xl text-blue-400">{playbookData.uniqueFormations}</span>
+                  <span className="font-display text-[10px] uppercase tracking-widest text-slate-500">Formations</span>
+                </div>
+                <div className="h-6 w-px bg-slate-700/50" />
+                <div className="flex items-center gap-2">
+                  <span className="stat-number text-2xl text-cyan-400">{playbookData.uniqueConcepts}</span>
+                  <span className="font-display text-[10px] uppercase tracking-widest text-slate-500">Concepts</span>
+                </div>
+                <div className="h-6 w-px bg-slate-700/50" />
+                <div className="flex items-center gap-2">
+                  <span className="stat-number text-2xl text-slate-300">{playbookData.totalPlays}</span>
+                  <span className="font-display text-[10px] uppercase tracking-widest text-slate-500">Total Plays</span>
+                </div>
+              </div>
+
+              {/* Formation cards */}
+              {playbookData.formations.map((fmt) => (
+                <div key={fmt.formation} className="glass-card rounded-xl p-5 space-y-3 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display text-sm font-bold text-white uppercase tracking-wider">
+                        {fmt.formation}
+                      </h3>
+                      <p className="font-display text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">
+                        {fmt.totalPlays} plays · {Math.round(fmt.runRate * 100)}% run
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`tag-chip ${fmt.runRate > 0.6 ? 'tag-warning' : fmt.runRate < 0.4 ? 'tag-info' : 'tag-neutral'}`}>
+                        {fmt.runRate > 0.6 ? 'Run Heavy' : fmt.runRate < 0.4 ? 'Pass Heavy' : 'Balanced'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-gradient-to-r from-blue-500/20 via-cyan-500/10 to-transparent" />
+
+                  <div className="space-y-2">
+                    {fmt.plays.slice(0, 6).map((play) => (
+                      <div key={play.name} className="flex items-center justify-between py-1.5">
+                        <div className="flex items-center gap-3">
+                          <span className={`font-display text-[10px] uppercase tracking-widest px-2 py-0.5 rounded ${
+                            play.playType.toLowerCase().includes('run')
+                              ? 'bg-amber-500/10 text-amber-400'
+                              : play.playType.toLowerCase().includes('pass')
+                                ? 'bg-blue-500/10 text-blue-400'
+                                : 'bg-slate-500/10 text-slate-400'
+                          }`}>
+                            {play.playType}
+                          </span>
+                          <span className="text-xs text-slate-300">
+                            {play.direction || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="font-display text-[10px] text-slate-500 uppercase tracking-widest">
+                            {play.clipCount} clips
+                          </span>
+                          <span className={`text-xs font-semibold ${
+                            play.successRate >= 0.5 ? 'text-emerald-400' : play.successRate >= 0.3 ? 'text-amber-400' : 'text-red-400'
+                          }`}>
+                            {Math.round(play.successRate * 100)}% success
+                          </span>
+                          <span className={`text-xs ${play.avgGain >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {play.avgGain > 0 ? '+' : ''}{play.avgGain} avg
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="glass-card rounded-xl py-12 text-center">
+              <p className="font-display text-sm text-slate-500 uppercase tracking-wider">
+                Click the Playbook tab to extract opponent playbook
+              </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Drives tab */}
+        <TabsContent value="drives" className="space-y-4 pt-6">
+          {isDriveLoading ? (
+            <div className="flex items-center gap-3 py-8">
+              <svg className="h-4 w-4 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              <p className="font-display text-sm uppercase tracking-widest text-slate-500">
+                Analyzing drive sequences...
+              </p>
+            </div>
+          ) : driveData ? (
+            <div className="grid gap-5 lg:grid-cols-2">
+              <TendencyCard breakdown={driveData.openingDrivePatterns} />
+              <TendencyCard breakdown={driveData.afterBigGain} />
+              <TendencyCard breakdown={driveData.afterNegativePlay} />
+              <TendencyCard breakdown={driveData.commonSequences} />
+              <TendencyCard breakdown={driveData.driveLength} />
+            </div>
+          ) : (
+            <div className="glass-card rounded-xl py-12 text-center">
+              <p className="font-display text-sm text-slate-500 uppercase tracking-wider">
+                Click the Drives tab to load drive analysis
+              </p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Report tab */}
+        <TabsContent value="report" className="pt-6">
+          {programId && (
+            <ReportViewer
+              programId={programId}
+              opponentId={opponentId}
+              opponentName={opponentName}
+            />
           )}
         </TabsContent>
       </Tabs>

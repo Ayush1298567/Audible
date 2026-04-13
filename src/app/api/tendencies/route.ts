@@ -7,7 +7,12 @@ import {
   getSuccessRateByPlayType,
   getSituationBreakdown,
   getSelfScoutAlerts,
+  getProgramTendencies,
+  getPlayerTendencyByFormation,
+  getMultiYearComparison,
 } from '@/lib/tendencies/queries';
+import { analyzeDriveSequences } from '@/lib/tendencies/drive-analysis';
+import { extractOpponentPlaybook } from '@/lib/tendencies/playbook-extraction';
 
 export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/tendencies' }, req);
@@ -94,6 +99,40 @@ export async function GET(req: Request): Promise<Response> {
           success,
           situations,
         });
+      }
+      case 'multiYear': {
+        if (!opponentId) {
+          return Response.json({ error: 'opponentId required for multi-year comparison' }, { status: 400 });
+        }
+        const result = await getMultiYearComparison(programId, opponentId);
+        span.done({ type, years: result.length });
+        return Response.json({ years: result });
+      }
+      case 'opponentPlaybook': {
+        if (!opponentId) {
+          return Response.json({ error: 'opponentId required for playbook extraction' }, { status: 400 });
+        }
+        const result = await extractOpponentPlaybook(programId, opponentId);
+        span.done({ type, formations: result.uniqueFormations, concepts: result.uniqueConcepts });
+        return Response.json(result);
+      }
+      case 'driveAnalysis': {
+        if (!opponentId) {
+          return Response.json({ error: 'opponentId required for drive analysis' }, { status: 400 });
+        }
+        const result = await analyzeDriveSequences(programId, opponentId);
+        span.done({ type });
+        return Response.json(result);
+      }
+      case 'programTendencies': {
+        const result = await getProgramTendencies(programId);
+        span.done({ type, totalPlays: result.formations.sampleSize });
+        return Response.json(result);
+      }
+      case 'playerTells': {
+        const result = await getPlayerTendencyByFormation(programId, filter);
+        span.done({ type, sampleSize: result.sampleSize });
+        return Response.json(result);
       }
       default:
         return Response.json({ error: `Unknown tendency type: ${type}` }, { status: 400 });

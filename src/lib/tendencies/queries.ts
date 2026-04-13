@@ -46,6 +46,8 @@ export interface TendencyBreakdown {
   confidence: 'low' | 'medium' | 'high' | 'very_high';
 }
 
+export type TendencyLayer = 'coordinator' | 'program' | 'player';
+
 export interface SituationFilter {
   opponentId?: string;
   down?: number;
@@ -54,6 +56,8 @@ export interface SituationFilter {
   fieldZone?: string;
   formation?: string;
   personnel?: string;
+  /** Which tendency layer to analyze */
+  layer?: TendencyLayer;
 }
 
 // ─── Core query builder ─────────────────────────────────────
@@ -263,6 +267,191 @@ export async function getSelfScoutAlerts(
   }
 
   return alerts;
+}
+
+// ─── Multi-year comparison ──────────────────────────────────
+
+/**
+ * Compare tendencies across seasons for the same opponent.
+ * Returns separate breakdowns per year so coaches can see what changed.
+ */
+export async function getMultiYearComparison(
+  programId: string,
+  opponentId: string,
+): Promise<Array<{ year: number; formation: TendencyBreakdown; playType: TendencyBreakdown }>> {
+  // Get all seasons that have games against this opponent
+  const seasonGames = await withProgramContext(programId, async (tx) =>
+    tx
+      .select({
+        year: sql<number>`EXTRACT(YEAR FROM ${plays.createdAt})`.as('year'),
+        id: plays.id,
+        formation: plays.formation,
+        playType: plays.playType,
+      })
+      .from(plays)
+      .innerJoin(games, eq(plays.gameId, games.id))
+      .where(and(
+        eq(plays.programId, programId),
+        eq(games.opponentId, opponentId),
+        eq(plays.status, 'ready'),
+      )),
+  );
+
+  // Group by year
+  const yearMap: Record<number, typeof seasonGames> = {};
+  for (const row of seasonGames) {
+    const year = row.year;
+    if (!yearMap[year]) yearMap[year] = [];
+    yearMap[year].push(row);
+  }
+
+  const results: Array<{ year: number; formation: TendencyBreakdown; playType: TendencyBreakdown }> = [];
+
+  for (const [yearStr, yearPlays] of Object.entries(yearMap)) {
+    const year = Number(yearStr);
+    const total = yearPlays.length;
+
+    // Formation breakdown
+    const formationGroups: Record<string, string[]> = {};
+    const playTypeGroups: Record<string, string[]> = {};
+
+    for (const p of yearPlays) {
+      const fmt = (p.formation ?? 'Unknown') as string;
+      const pt = (p.playType ?? 'Unknown') as string;
+      if (!formationGroups[fmt]) formationGroups[fmt] = [];
+      formationGroups[fmt].push(p.id);
+      if (!playTypeGroups[pt]) playTypeGroups[pt] = [];
+      playTypeGroups[pt].push(p.id);
+    }
+
+    const buildTendencies = (groups: Record<string, string[]>): TendencyResult[] =>
+      Object.entries(groups)
+        .map(([label, ids]) => ({ label, count: ids.length, total, rate: total > 0 ? ids.length / total : 0, playIds: ids }))
+        .sort((a, b) => b.count - a.count);
+
+    results.push({
+      year,
+      formation: {
+        situation: `Formation Frequency (${year})`,
+        tendencies: buildTendencies(formationGroups),
+        sampleSize: total,
+        confidence: confidenceFromCount(total),
+      },
+      playType: {
+        situation: `Play Type Distribution (${year})`,
+        tendencies: buildTendencies(playTypeGroups),
+        sampleSize: total,
+        confidence: confidenceFromCount(total),
+      },
+    });
+  }
+
+  return results.sort((a, b) => b.year - a.year);
+}
+
+// ─── Three-layer tendency queries ───────────────────────────
+
+/**
+ * Coordinator tendencies — play-calling patterns for a specific opponent.
+ * What the opponent's coordinator does in each situation.
+ * Scoped to opponent games only.
+ */
+export async function getCoordinatorTendencies(
+  programId: string,
+  opponentId: string,
+): Promise<TendencyBreakdown[]> {
+  return getSituationBreakdown(programId, opponentId);
+}
+
+/**
+ * Program tendencies — scheme DNA across ALL games.
+ * What the opponent does regardless of who they're playing.
+ * Not opponent-scoped — analyzes ALL of the program's own film.
+ */
+export async function getProgramTendencies(
+  programId: string,
+): Promise<{
+  formations: TendencyBreakdown;
+  personnel: TendencyBreakdown;
+  playTypes: TendencyBreakdown;
+  direction: TendencyBreakdown;
+}> {
+  const [formations, personnel, playTypes, direction] = await Promise.all([
+    getFormationFrequency(programId, {}),
+    getPersonnelFrequency(programId, {}),
+    getPlayTypeDistribution(programId, {}),
+    getPlayDirectionTendency(programId, {}),
+  ]);
+
+  return { formations, personnel, playTypes, direction };
+}
+
+/**
+ * Player tendencies — individual habits from play data.
+ * Groups plays by a specific tag field and player-associated patterns.
+ * For now, uses formation + personnel + play type correlations.
+ * When CV data populates player_detections, this will use alignment/depth data.
+ */
+export async function getPlayerTendencyByFormation(
+  programId: string,
+  filter: SituationFilter,
+): Promise<TendencyBreakdown> {
+  // Cross-reference formation with play type to find individual tells
+  const conditions = buildWhereClause(programId, filter);
+
+  const result = await withProgramContext(programId, async (tx) =>
+    tx
+      .select({
+        formation: plays.formation,
+        playType: plays.playType,
+        id: plays.id,
+      })
+      .from(plays)
+      .leftJoin(games, eq(plays.gameId, games.id))
+      .where(and(...conditions)),
+  );
+
+  // Group by formation → play type to find formation-based tells
+  const formationGroups: Record<string, Record<string, string[]>> = {};
+
+  for (const row of result) {
+    const fmt = row.formation ?? 'Unknown';
+    const pt = row.playType ?? 'Unknown';
+    if (!formationGroups[fmt]) formationGroups[fmt] = {};
+    if (!formationGroups[fmt][pt]) formationGroups[fmt][pt] = [];
+    formationGroups[fmt][pt].push(row.id);
+  }
+
+  // Find formations that heavily lean run or pass (tells)
+  const tendencies: TendencyResult[] = [];
+
+  for (const [formation, types] of Object.entries(formationGroups)) {
+    const allIds = Object.values(types).flat();
+    const total = allIds.length;
+    if (total < 5) continue; // Skip small samples
+
+    for (const [playType, ids] of Object.entries(types)) {
+      const rate = ids.length / total;
+      if (rate >= 0.6) {
+        tendencies.push({
+          label: `${formation} → ${playType}`,
+          count: ids.length,
+          total,
+          rate,
+          playIds: ids,
+        });
+      }
+    }
+  }
+
+  tendencies.sort((a, b) => b.rate - a.rate);
+
+  return {
+    situation: 'Formation Tells (Run/Pass)',
+    tendencies,
+    sampleSize: result.length,
+    confidence: confidenceFromCount(result.length),
+  };
 }
 
 // ─── Generic group-by helper ────────────────────────────────
