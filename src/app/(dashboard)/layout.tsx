@@ -28,17 +28,14 @@ function DashboardGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoading || !isUserLoaded) return;
 
-    // Always check for the best program (one with data)
+    // Always fetch the best program and set it
     fetch('/api/programs')
       .then((res) => res.json())
       .then((data) => {
         const best = data.programs?.[0]; // sorted by play count desc
         if (best) {
-          // Switch to the program with the most data
-          if (!programId || best.id !== programId) {
-            setProgramId(best.id, best.name);
-          }
-        } else if (!programId) {
+          setProgramId(best.id, best.name);
+        } else {
           router.replace('/setup');
         }
       })
