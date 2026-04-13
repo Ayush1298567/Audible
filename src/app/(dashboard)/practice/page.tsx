@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -98,33 +96,53 @@ export default function PracticeBuilderPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Practice Builder</h1>
-          <p className="text-muted-foreground">
-            {sessionsList.length} session{sessionsList.length !== 1 ? 's' : ''}
+          <h1 className="font-display text-3xl font-bold tracking-wide text-foreground">
+            Practice Builder
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="stat-number text-base text-primary">{sessionsList.length}</span>
+            {' '}session{sessionsList.length !== 1 ? 's' : ''} built
           </p>
         </div>
 
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger className={buttonVariants()}>
+          <DialogTrigger className={`${buttonVariants()} glow-blue`}>
             New Session
           </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogContent className="glass-card border-border/50 max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Create Practice Session</DialogTitle>
+              <DialogTitle className="font-display text-xl tracking-wide">
+                Create Practice Session
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4">
+            <form onSubmit={handleCreate} className="space-y-4 pt-2">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="sess-name">Session Name</Label>
-                  <Input id="sess-name" name="name" placeholder="Coverage Recognition vs Jefferson" required />
+                  <Label htmlFor="sess-name" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Session Name
+                  </Label>
+                  <Input
+                    id="sess-name"
+                    name="name"
+                    placeholder="Coverage Recognition vs Jefferson"
+                    required
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sess-type">Type</Label>
-                  <select id="sess-type" name="sessionType" required
-                    className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+                  <Label htmlFor="sess-type" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Type
+                  </Label>
+                  <select
+                    id="sess-type"
+                    name="sessionType"
+                    required
+                    className="flex h-10 w-full rounded-md border border-border/50 bg-white/[0.03] px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                  >
                     <option value="film_review">Film Review</option>
                     <option value="recognition_challenge">Recognition Challenge</option>
                   </select>
@@ -132,49 +150,79 @@ export default function PracticeBuilderPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="sess-pos">Position Group</Label>
-                  <select id="sess-pos" name="positionGroup" required
-                    className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+                  <Label htmlFor="sess-pos" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Position Group
+                  </Label>
+                  <select
+                    id="sess-pos"
+                    name="positionGroup"
+                    required
+                    className="flex h-10 w-full rounded-md border border-border/50 bg-white/[0.03] px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                  >
                     {['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'DB', 'ALL'].map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sess-min">Estimated Minutes</Label>
-                  <Input id="sess-min" name="estimatedMinutes" type="number" defaultValue={10} min={1} max={30} />
+                  <Label htmlFor="sess-min" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Estimated Minutes
+                  </Label>
+                  <Input
+                    id="sess-min"
+                    name="estimatedMinutes"
+                    type="number"
+                    defaultValue={10}
+                    min={1}
+                    max={30}
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
               </div>
 
               {/* Play selector */}
               <div className="space-y-2">
-                <Label>Select Plays ({selectedPlays.length} selected)</Label>
-                <div className="max-h-48 overflow-y-auto space-y-1 rounded border border-border p-2">
+                <Label className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                  Select Plays{' '}
+                  {selectedPlays.length > 0 && (
+                    <span className="ml-1 tag-chip tag-info normal-case">
+                      {selectedPlays.length} selected
+                    </span>
+                  )}
+                </Label>
+                <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-border/40 bg-white/[0.02] p-2">
                   {availablePlays.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-4 text-center">
                       No plays available. Upload film first.
                     </p>
                   ) : (
-                    availablePlays.map((play) => (
-                      <button
-                        key={play.id}
-                        type="button"
-                        onClick={() => togglePlay(play.id)}
-                        className={`w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${
-                          selectedPlays.includes(play.id)
-                            ? 'bg-primary text-primary-foreground'
-                            : 'hover:bg-muted'
-                        }`}
-                      >
-                        #{play.playOrder} — {play.down ? `${play.down}&${play.distance}` : '-'} — {play.formation ?? '?'} — {play.playType ?? '?'}
-                        {play.opponentName ? ` (${play.opponentName})` : ''}
-                      </button>
-                    ))
+                    availablePlays.map((play) => {
+                      const isSelected = selectedPlays.includes(play.id);
+                      return (
+                        <button
+                          key={play.id}
+                          type="button"
+                          onClick={() => togglePlay(play.id)}
+                          className={`w-full rounded-md px-3 py-2 text-left text-xs transition-all ${
+                            isSelected
+                              ? 'bg-primary/20 border border-primary/30 text-primary-foreground'
+                              : 'hover:bg-white/[0.04] border border-transparent text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <span className="font-display font-bold text-foreground/70 mr-2">#{play.playOrder}</span>
+                          {play.down ? `${play.down}&${play.distance}` : '—'} ·{' '}
+                          {play.formation ?? '?'} · {play.playType ?? '?'}
+                          {play.opponentName ? (
+                            <span className="ml-1 text-muted-foreground/50">({play.opponentName})</span>
+                          ) : null}
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={selectedPlays.length === 0}>
+              <Button type="submit" className="w-full glow-blue" disabled={selectedPlays.length === 0}>
                 Create Session ({selectedPlays.length} plays)
               </Button>
             </form>
@@ -184,50 +232,70 @@ export default function PracticeBuilderPage() {
 
       {/* Sessions list */}
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading sessions...</p>
+        <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
+          <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-primary" />
+          Loading sessions...
+        </div>
       ) : sessionsList.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="py-12 text-center">
-            <p className="text-sm text-muted-foreground">
-              No practice sessions yet. Click &quot;New Session&quot; to build one.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="glass-card rounded-xl border border-dashed border-border/50 py-16 text-center animate-fade-in">
+          <p className="text-sm text-muted-foreground">
+            No practice sessions yet. Click &ldquo;New Session&rdquo; to build one.
+          </p>
+        </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {sessionsList.map((session) => (
-            <Card key={session.id}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{session.name}</CardTitle>
-                  <Badge variant={session.isPublished ? 'default' : 'secondary'}>
-                    {session.isPublished ? 'Published' : 'Draft'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline">{session.sessionType === 'film_review' ? 'Film Review' : 'Recognition'}</Badge>
-                  <span>{session.positionGroup}</span>
-                  <span>~{session.estimatedMinutes} min</span>
-                </div>
-                {session.scheduledFor && (
-                  <p className="text-xs text-muted-foreground">
-                    Scheduled: {new Date(session.scheduledFor).toLocaleDateString()}
-                  </p>
+          {sessionsList.map((session, idx) => (
+            <div
+              key={session.id}
+              className={`glass-card rounded-xl p-5 space-y-4 animate-fade-in stagger-${Math.min(idx + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6} transition-all hover:border-primary/30`}
+            >
+              {/* Top: published badge */}
+              <div className="flex items-center justify-between">
+                {session.isPublished ? (
+                  <span className="tag-chip tag-positive glow-success">Published</span>
+                ) : (
+                  <span className="tag-chip tag-neutral">Draft</span>
                 )}
-                {!session.isPublished && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handlePublish(session.id)}
-                    className="w-full"
-                  >
-                    Publish to Players
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
+                <span className="text-xs text-muted-foreground">
+                  ~{session.estimatedMinutes} min
+                </span>
+              </div>
+
+              {/* Session name */}
+              <div>
+                <h3 className="font-display text-base font-bold text-foreground leading-snug">
+                  {session.name}
+                </h3>
+              </div>
+
+              {/* Meta row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`tag-chip ${session.sessionType === 'film_review' ? 'tag-info' : 'tag-warning'}`}>
+                  {session.sessionType === 'film_review' ? 'Film Review' : 'Recognition'}
+                </span>
+                <span className="font-display text-xs font-bold uppercase tracking-widest text-muted-foreground/70">
+                  {session.positionGroup}
+                </span>
+              </div>
+
+              {/* Scheduled date */}
+              {session.scheduledFor && (
+                <p className="text-xs text-muted-foreground border-t border-border/20 pt-2">
+                  Scheduled: {new Date(session.scheduledFor).toLocaleDateString()}
+                </p>
+              )}
+
+              {/* Publish button */}
+              {!session.isPublished && (
+                <Button
+                  size="sm"
+                  onClick={() => void handlePublish(session.id)}
+                  className="w-full glow-blue"
+                >
+                  Publish to Players
+                </Button>
+              )}
+            </div>
           ))}
         </div>
       )}

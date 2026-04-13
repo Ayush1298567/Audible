@@ -3,10 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PlayCard } from '@/components/ui/play-card';
 import {
   Select,
   SelectContent,
@@ -134,109 +133,236 @@ export default function FilmRoomPage() {
   return (
     <div className="flex h-full gap-6">
       {/* Left panel: play grid + filters */}
-      <div className="flex flex-1 flex-col space-y-4 overflow-hidden">
-        <div className="flex items-center justify-between">
+      <div className="flex flex-1 flex-col space-y-5 overflow-hidden">
+
+        {/* Page header */}
+        <div className="flex items-end justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Film Room</h1>
-            <p className="text-muted-foreground">
-              {filtered.length} play{filtered.length !== 1 ? 's' : ''}
-              {plays.length !== filtered.length ? ` (${plays.length} total)` : ''}
+            <p className="font-display text-xs uppercase tracking-widest text-blue-400 mb-1">
+              Analysis Suite
+            </p>
+            <h1 className="font-display text-3xl font-bold tracking-tight text-white">
+              Film Room
+            </h1>
+          </div>
+          <div className="text-right">
+            <span className="stat-number text-2xl text-blue-400">{filtered.length}</span>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {filtered.length !== 1 ? 'plays' : 'play'}
+              {plays.length !== filtered.length ? ` of ${plays.length}` : ' total'}
             </p>
           </div>
         </div>
 
+        {/* Gradient divider */}
+        <div className="h-px bg-gradient-to-r from-blue-500/50 via-cyan-500/30 to-transparent" />
+
         {/* Upload section */}
         {games.length > 0 && (
-          <Card>
-            <CardContent className="pt-4">
-              <form onSubmit={handleUpload} className="flex items-end gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="upload-game" className="text-xs">Game</Label>
+          <div className="glass-card rounded-xl p-5 relative overflow-hidden noise-overlay">
+            {/* Decorative dashed dropzone border accent */}
+            <div className="absolute inset-2 rounded-lg border border-dashed border-blue-500/20 pointer-events-none" />
+
+            <div className="relative z-10">
+              {/* Upload header */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <svg className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-display text-sm font-semibold text-white">Import Game Film</p>
+                  <p className="text-xs text-slate-500">Hudl CSV + SportsCode XML + MP4</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleUpload} className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-game" className="font-display text-[10px] uppercase tracking-widest text-slate-400">
+                    Game
+                  </Label>
                   <select
                     id="upload-game"
                     name="gameId"
                     required
-                    className="flex h-9 rounded-md border border-border bg-background px-2 py-1 text-sm"
+                    className="flex h-9 rounded-lg border border-slate-700/50 bg-slate-900/60 px-3 py-1 text-sm text-slate-200 focus:outline-none focus:border-blue-500/50 transition-colors"
                   >
-                    <option value="">Select...</option>
+                    <option value="">Select game...</option>
                     {games.map((g) => (
                       <option key={g.id} value={g.id}>{g.opponentName ?? 'Unknown'}</option>
                     ))}
                   </select>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="upload-csv" className="text-xs">Breakdown CSV</Label>
-                  <Input id="upload-csv" name="csv" type="file" accept=".csv" required className="h-9 text-xs" />
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-csv" className="font-display text-[10px] uppercase tracking-widest text-slate-400">
+                    Breakdown CSV
+                  </Label>
+                  <Input
+                    id="upload-csv"
+                    name="csv"
+                    type="file"
+                    accept=".csv"
+                    required
+                    className="h-9 text-xs border-slate-700/50 bg-slate-900/60 text-slate-300 file:text-slate-400 file:bg-transparent"
+                  />
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="upload-xml" className="text-xs">SportsCode XML</Label>
-                  <Input id="upload-xml" name="xml" type="file" accept=".xml" required className="h-9 text-xs" />
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-xml" className="font-display text-[10px] uppercase tracking-widest text-slate-400">
+                    SportsCode XML
+                  </Label>
+                  <Input
+                    id="upload-xml"
+                    name="xml"
+                    type="file"
+                    accept=".xml"
+                    required
+                    className="h-9 text-xs border-slate-700/50 bg-slate-900/60 text-slate-300 file:text-slate-400 file:bg-transparent"
+                  />
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="upload-mp4" className="text-xs">Concatenated MP4</Label>
-                  <Input id="upload-mp4" name="mp4" type="file" accept=".mp4,video/*" required className="h-9 text-xs" />
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-mp4" className="font-display text-[10px] uppercase tracking-widest text-slate-400">
+                    Concatenated MP4
+                  </Label>
+                  <Input
+                    id="upload-mp4"
+                    name="mp4"
+                    type="file"
+                    accept=".mp4,video/*"
+                    required
+                    className="h-9 text-xs border-slate-700/50 bg-slate-900/60 text-slate-300 file:text-slate-400 file:bg-transparent"
+                  />
                 </div>
-                <Button type="submit" disabled={isUploading} className="h-9">
-                  {isUploading ? 'Processing...' : 'Upload'}
+
+                <Button
+                  type="submit"
+                  disabled={isUploading}
+                  className="h-9 bg-blue-600 hover:bg-blue-500 text-white font-display text-xs uppercase tracking-wider border-0 transition-all"
+                >
+                  {isUploading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Processing...
+                    </span>
+                  ) : 'Upload'}
                 </Button>
               </form>
+
               {uploadProgress && (
-                <p className={`mt-2 text-xs ${uploadProgress.startsWith('Error') ? 'text-red-500' : 'text-muted-foreground'}`}>
+                <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+                  uploadProgress.startsWith('Error')
+                    ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    : uploadProgress.startsWith('Done')
+                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                    : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'
+                }`}>
                   {uploadProgress}
-                </p>
+                </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
 
-        {/* Filters */}
+        {/* Filter chips */}
         {plays.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            <FilterChip label="Down" value={filterDown} onChange={setFilterDown}
-              options={[{ value: 'all', label: 'All' }, { value: '1', label: '1st' }, { value: '2', label: '2nd' }, { value: '3', label: '3rd' }, { value: '4', label: '4th' }]}
-            />
-            <FilterChip label="Quarter" value={filterQuarter} onChange={setFilterQuarter}
-              options={[{ value: 'all', label: 'All' }, { value: '1', label: 'Q1' }, { value: '2', label: 'Q2' }, { value: '3', label: 'Q3' }, { value: '4', label: 'Q4' }]}
-            />
-            {formations.length > 0 && (
-              <FilterChip label="Formation" value={filterFormation} onChange={setFilterFormation}
-                options={[{ value: 'all', label: 'All' }, ...formations.map((f) => ({ value: f, label: f }))]}
+          <div className="space-y-2">
+            <p className="font-display text-[10px] uppercase tracking-widest text-slate-500">Filters</p>
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                label="Down"
+                value={filterDown}
+                onChange={setFilterDown}
+                options={[
+                  { value: 'all', label: 'All Downs' },
+                  { value: '1', label: '1st' },
+                  { value: '2', label: '2nd' },
+                  { value: '3', label: '3rd' },
+                  { value: '4', label: '4th' },
+                ]}
               />
-            )}
-            {playTypes.length > 0 && (
-              <FilterChip label="Play Type" value={filterPlayType} onChange={setFilterPlayType}
-                options={[{ value: 'all', label: 'All' }, ...playTypes.map((t) => ({ value: t, label: t }))]}
+              <FilterChip
+                label="Quarter"
+                value={filterQuarter}
+                onChange={setFilterQuarter}
+                options={[
+                  { value: 'all', label: 'All Quarters' },
+                  { value: '1', label: 'Q1' },
+                  { value: '2', label: 'Q2' },
+                  { value: '3', label: 'Q3' },
+                  { value: '4', label: 'Q4' },
+                ]}
               />
-            )}
+              {formations.length > 0 && (
+                <FilterChip
+                  label="Formation"
+                  value={filterFormation}
+                  onChange={setFilterFormation}
+                  options={[{ value: 'all', label: 'All Formations' }, ...formations.map((f) => ({ value: f, label: f }))]}
+                />
+              )}
+              {playTypes.length > 0 && (
+                <FilterChip
+                  label="Play Type"
+                  value={filterPlayType}
+                  onChange={setFilterPlayType}
+                  options={[{ value: 'all', label: 'All Types' }, ...playTypes.map((t) => ({ value: t, label: t }))]}
+                />
+              )}
+            </div>
           </div>
         )}
 
         {/* Play grid */}
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading plays...</p>
+            <div className="flex items-center gap-3 py-8">
+              <svg className="h-4 w-4 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              <p className="font-display text-sm text-slate-500 uppercase tracking-wider">Loading plays...</p>
+            </div>
           ) : filtered.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                <p className="text-lg font-medium">
-                  {plays.length === 0 ? 'No film uploaded yet' : 'No plays match your filters'}
-                </p>
-                <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                  {plays.length === 0
-                    ? 'Add a game in the Games tab, then upload your Hudl breakdown CSV, SportsCode XML, and concatenated MP4 above.'
-                    : 'Try adjusting or clearing your filters.'}
-                </p>
-              </CardContent>
-            </Card>
+            <div className="glass-card rounded-xl border border-dashed border-slate-700/50 flex flex-col items-center justify-center py-20 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-800/60 border border-slate-700/50 mb-4">
+                <svg className="h-6 w-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125V8.25m0 0A2.25 2.25 0 012.25 6V3.375C2.25 2.339 3.09 1.5 4.125 1.5h15.75c1.035 0 1.875.84 1.875 1.875V6a2.25 2.25 0 01-.375 1.25M2.25 8.25H21.75" />
+                </svg>
+              </div>
+              <p className="font-display text-base font-semibold text-slate-300">
+                {plays.length === 0 ? 'No film uploaded yet' : 'No plays match your filters'}
+              </p>
+              <p className="mt-2 max-w-sm text-sm text-slate-500">
+                {plays.length === 0
+                  ? 'Add a game in the Games tab, then upload your Hudl breakdown CSV, SportsCode XML, and concatenated MP4 above.'
+                  : 'Try adjusting or clearing your filters.'}
+              </p>
+            </div>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filtered.map((play) => (
-                <PlayCard
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filtered.map((play, i) => (
+                <div
                   key={play.id}
-                  play={play}
-                  isSelected={selectedPlay?.id === play.id}
-                  onClick={() => setSelectedPlay(play)}
-                />
+                  className={`animate-fade-in stagger-${Math.min((i % 6) + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6}`}
+                >
+                  <PlayCard
+                    playOrder={play.playOrder}
+                    down={play.down}
+                    distance={play.distance}
+                    formation={play.formation}
+                    playType={play.playType}
+                    gainLoss={play.gainLoss}
+                    isSelected={selectedPlay?.id === play.id}
+                    status={play.status}
+                    onClick={() => setSelectedPlay(play)}
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -245,48 +371,79 @@ export default function FilmRoomPage() {
 
       {/* Right panel: video player + play details */}
       {selectedPlay && (
-        <div className="w-96 shrink-0 space-y-4 overflow-y-auto border-l border-border pl-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Play #{selectedPlay.playOrder}</h2>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedPlay(null)}>
-              Close
-            </Button>
+        <div className="w-96 shrink-0 overflow-y-auto border-l border-slate-800/60 pl-6 space-y-5">
+          {/* Panel header */}
+          <div className="flex items-center justify-between pt-1">
+            <div>
+              <p className="font-display text-[10px] uppercase tracking-widest text-slate-500">Now Viewing</p>
+              <h2 className="font-display text-lg font-bold text-white mt-0.5">
+                Play #{selectedPlay.playOrder}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedPlay(null)}
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-700/50 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
 
-          {/* Video player — football clips have no caption tracks */}
+          {/* Gradient divider */}
+          <div className="h-px bg-gradient-to-r from-blue-500/40 via-cyan-500/20 to-transparent" />
+
+          {/* Video player */}
           {selectedPlay.clipBlobKey ? (
-            // biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks
-            <video
-              key={selectedPlay.id}
-              controls
-              autoPlay
-              className="w-full rounded-lg bg-black"
-              src={selectedPlay.clipBlobKey}
-            />
+            <div className="video-container glow-blue">
+              {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
+              <video
+                key={selectedPlay.id}
+                controls
+                autoPlay
+                src={selectedPlay.clipBlobKey}
+              />
+            </div>
           ) : (
-            <div className="flex h-48 items-center justify-center rounded-lg bg-muted">
-              <p className="text-xs text-muted-foreground">
-                {selectedPlay.status === 'awaiting_clip' ? 'Clip processing...' : 'No clip available'}
-              </p>
+            <div className="flex h-44 items-center justify-center rounded-xl bg-slate-900/60 border border-slate-700/30">
+              <div className="text-center">
+                <svg className="h-8 w-8 text-slate-600 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <p className="text-xs text-slate-500">
+                  {selectedPlay.status === 'awaiting_clip' ? 'Clip processing...' : 'No clip available'}
+                </p>
+              </div>
             </div>
           )}
 
           {/* Play data tags */}
-          <div className="space-y-3">
-            <TagRow label="Down & Distance" value={
-              selectedPlay.down && selectedPlay.distance
-                ? `${selectedPlay.down}${ordinal(selectedPlay.down)} & ${selectedPlay.distance}`
-                : '-'
-            } />
+          <div className="glass-card rounded-xl p-4 space-y-1">
+            <p className="font-display text-[10px] uppercase tracking-widest text-slate-500 mb-3">Play Details</p>
+
+            <TagRow
+              label="Down & Distance"
+              value={
+                selectedPlay.down && selectedPlay.distance
+                  ? `${selectedPlay.down}${ordinal(selectedPlay.down)} & ${selectedPlay.distance}`
+                  : '-'
+              }
+              highlight
+            />
             <TagRow label="Formation" value={selectedPlay.formation} />
             <TagRow label="Personnel" value={selectedPlay.personnel} />
             <TagRow label="Play Type" value={selectedPlay.playType} />
             <TagRow label="Direction" value={selectedPlay.playDirection} />
-            <TagRow label="Gain/Loss" value={
-              selectedPlay.gainLoss != null
-                ? `${selectedPlay.gainLoss > 0 ? '+' : ''}${selectedPlay.gainLoss} yds`
-                : '-'
-            } />
+            <TagRow
+              label="Gain / Loss"
+              value={
+                selectedPlay.gainLoss != null
+                  ? `${selectedPlay.gainLoss > 0 ? '+' : ''}${selectedPlay.gainLoss} yds`
+                  : '-'
+              }
+              gainLoss={selectedPlay.gainLoss}
+            />
             <TagRow label="Result" value={selectedPlay.result} />
             <TagRow label="Hash" value={selectedPlay.hash} />
             <TagRow label="Quarter" value={selectedPlay.quarter ? `Q${selectedPlay.quarter}` : null} />
@@ -298,48 +455,12 @@ export default function FilmRoomPage() {
   );
 }
 
-function PlayCard({ play, isSelected, onClick }: { play: Play; isSelected: boolean; onClick: () => void }) {
-  const outcome = play.gainLoss != null
-    ? play.gainLoss > 3 ? 'positive' : play.gainLoss < 0 ? 'negative' : 'neutral'
-    : 'neutral';
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-lg border p-3 text-left transition-colors hover:bg-muted ${
-        isSelected ? 'border-primary bg-muted' : 'border-border'
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">#{play.playOrder}</span>
-        <span className={`inline-block h-2 w-2 rounded-full ${
-          outcome === 'positive' ? 'bg-green-500' : outcome === 'negative' ? 'bg-red-500' : 'bg-gray-400'
-        }`} />
-      </div>
-      <div className="mt-1">
-        <p className="text-sm font-medium">
-          {play.down ? `${play.down}${ordinal(play.down)} & ${play.distance ?? '?'}` : 'No D&D'}
-        </p>
-        <p className="text-xs text-muted-foreground truncate">
-          {play.formation ?? 'Unknown'} · {play.playType ?? '?'}
-        </p>
-        {play.gainLoss != null && (
-          <p className={`mt-1 text-xs font-mono ${
-            play.gainLoss > 0 ? 'text-green-600' : play.gainLoss < 0 ? 'text-red-600' : 'text-muted-foreground'
-          }`}>
-            {play.gainLoss > 0 ? '+' : ''}{play.gainLoss} yds
-          </p>
-        )}
-      </div>
-      {play.status !== 'ready' && (
-        <Badge variant="outline" className="mt-2 text-xs">{play.status}</Badge>
-      )}
-    </button>
-  );
-}
-
-function FilterChip({ label, value, onChange, options }: {
+function FilterChip({
+  label,
+  value,
+  onChange,
+  options,
+}: {
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -347,12 +468,18 @@ function FilterChip({ label, value, onChange, options }: {
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v ?? 'all')}>
-      <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs">
+      <SelectTrigger
+        className={`h-8 w-auto min-w-[110px] rounded-full border text-xs font-display uppercase tracking-wider transition-all ${
+          value !== 'all'
+            ? 'border-blue-500/50 bg-blue-500/10 text-blue-300 shadow-sm shadow-blue-500/10'
+            : 'border-slate-700/50 bg-slate-900/40 text-slate-400 hover:border-slate-600/60 hover:text-slate-300'
+        }`}
+      >
         <SelectValue placeholder={label} />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="bg-slate-900 border-slate-700/50">
         {options.map((o) => (
-          <SelectItem key={o.value} value={o.value} className="text-xs">
+          <SelectItem key={o.value} value={o.value} className="text-xs font-display">
             {o.label}
           </SelectItem>
         ))}
@@ -361,11 +488,31 @@ function FilterChip({ label, value, onChange, options }: {
   );
 }
 
-function TagRow({ label, value }: { label: string; value: string | number | null | undefined }) {
+function TagRow({
+  label,
+  value,
+  highlight = false,
+  gainLoss,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  highlight?: boolean;
+  gainLoss?: number | null;
+}) {
+  const valueColor = gainLoss != null
+    ? gainLoss > 0
+      ? 'text-emerald-400'
+      : gainLoss < 0
+      ? 'text-red-400'
+      : 'text-slate-400'
+    : highlight
+    ? 'text-white font-semibold'
+    : 'text-slate-300';
+
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value ?? '-'}</span>
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-800/50 last:border-0">
+      <span className="font-display text-[10px] uppercase tracking-widest text-slate-500">{label}</span>
+      <span className={`text-xs ${valueColor}`}>{value ?? '—'}</span>
     </div>
   );
 }

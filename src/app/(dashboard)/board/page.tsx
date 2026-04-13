@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -185,146 +183,194 @@ export default function BoardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">The Board</h1>
-          <p className="text-muted-foreground">
-            {selectedPlan ? `Game plan: ${selectedPlan.weekLabel}` : 'Build your game plan'}
+          <h1 className="font-display text-3xl font-bold tracking-wide text-foreground">
+            The Board
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {selectedPlan
+              ? <span className="text-accent font-medium">{selectedPlan.weekLabel}</span>
+              : 'Select or create a game plan'}
           </p>
         </div>
-        <div className="flex gap-2">
+
+        <div className="flex items-center gap-2">
           {selectedPlan && selectedPlan.publishStatus !== 'published' && (
-            <Button onClick={handlePublish} variant="default">
+            <Button onClick={handlePublish} className="glow-blue">
               Publish Game Plan
             </Button>
           )}
           {selectedPlan?.publishStatus === 'published' && (
-            <Badge className="bg-green-100 text-green-800">Published</Badge>
+            <span className="tag-chip tag-positive glow-success">Published</span>
           )}
+
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger className={buttonVariants({ variant: 'outline' })}>
+            <DialogTrigger className={`${buttonVariants({ variant: 'outline' })} border-border/50 bg-white/[0.03] hover:bg-white/[0.06]`}>
               New Game Plan
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="glass-card border-border/50">
               <DialogHeader>
-                <DialogTitle>Create Game Plan</DialogTitle>
+                <DialogTitle className="font-display text-xl tracking-wide">
+                  Create Game Plan
+                </DialogTitle>
               </DialogHeader>
-              <form onSubmit={handleCreate} className="space-y-4">
+              <form onSubmit={handleCreate} className="space-y-4 pt-2">
                 <div className="space-y-2">
-                  <Label htmlFor="gp-opp">Opponent</Label>
-                  <select id="gp-opp" name="opponentId" required
-                    className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+                  <Label htmlFor="gp-opp" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Opponent
+                  </Label>
+                  <select
+                    id="gp-opp"
+                    name="opponentId"
+                    required
+                    className="flex h-10 w-full rounded-md border border-border/50 bg-white/[0.03] px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                  >
                     <option value="">Select...</option>
                     {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="gp-week">Week Label</Label>
-                  <Input id="gp-week" name="weekLabel" placeholder="Week 3 vs Jefferson" required />
+                  <Label htmlFor="gp-week" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Week Label
+                  </Label>
+                  <Input
+                    id="gp-week"
+                    name="weekLabel"
+                    placeholder="Week 3 vs Jefferson"
+                    required
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
-                <Button type="submit" className="w-full">Create</Button>
+                <Button type="submit" className="w-full glow-blue">Create</Button>
               </form>
             </DialogContent>
           </Dialog>
         </div>
       </div>
 
-      {/* Plan selector */}
+      {/* Plan selector (no plan selected yet) */}
       {!selectedPlan && (
         isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading...</p>
+          <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
+            <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-primary" />
+            Loading game plans...
+          </div>
         ) : gamePlans.length === 0 ? (
-          <Card className="border-dashed">
-            <CardContent className="py-12 text-center">
-              <p className="text-sm text-muted-foreground">
-                No game plans yet. Click &quot;New Game Plan&quot; to start building.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="glass-card rounded-xl border border-dashed border-border/50 py-16 text-center animate-fade-in">
+            <p className="text-sm text-muted-foreground">
+              No game plans yet. Click &ldquo;New Game Plan&rdquo; to start building.
+            </p>
+          </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {gamePlans.map(plan => (
-              <button key={plan.id} type="button" onClick={() => void loadPlanPlays(plan.id)}
-                className="rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted">
-                <p className="font-medium">{plan.weekLabel}</p>
-                <Badge variant={plan.publishStatus === 'published' ? 'default' : 'secondary'} className="mt-2 text-xs">
+            {gamePlans.map((plan, idx) => (
+              <button
+                key={plan.id}
+                type="button"
+                onClick={() => void loadPlanPlays(plan.id)}
+                className={`glass-card rounded-xl p-5 text-left transition-all hover:border-primary/30 animate-fade-in stagger-${Math.min(idx + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6}`}
+              >
+                <p className="font-display font-bold text-base text-foreground mb-3">
+                  {plan.weekLabel}
+                </p>
+                <span className={`tag-chip ${plan.publishStatus === 'published' ? 'tag-positive' : 'tag-neutral'}`}>
                   {plan.publishStatus}
-                </Badge>
+                </span>
               </button>
             ))}
           </div>
         )
       )}
 
-      {/* Situation columns */}
+      {/* Situation columns (kanban board) */}
       {selectedPlan && (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {SITUATIONS.map(sit => {
+        <div className="flex gap-3 overflow-x-auto pb-4">
+          {SITUATIONS.map((sit) => {
             const sitPlays = playsBySituation[sit.key] ?? [];
             const sitSuggestions = suggestions[sit.key] ?? [];
 
             return (
-              <div key={sit.key} className="w-64 shrink-0 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">{sit.label}</h3>
-                  <span className="text-xs text-muted-foreground">{sitPlays.length}</span>
+              <div key={sit.key} className="w-56 shrink-0 space-y-2">
+                {/* Column header */}
+                <div className="glass-card rounded-lg px-3 py-2 flex items-center justify-between">
+                  <h3 className="font-display text-xs font-bold uppercase tracking-widest text-foreground/80">
+                    {sit.label}
+                  </h3>
+                  <span className="text-xs font-mono text-muted-foreground/60">{sitPlays.length}</span>
                 </div>
 
-                {/* Play cards in this situation */}
-                <div className="space-y-2">
-                  {sitPlays.map(play => (
-                    <Card key={play.id} className="text-sm">
-                      <CardContent className="p-3">
-                        <p className="font-medium">{play.playName}</p>
-                        {play.formation && (
-                          <p className="text-xs text-muted-foreground">{play.formation}</p>
-                        )}
-                        {play.attacksTendency && (
-                          <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
-                            Attacks: {play.attacksTendency}
-                          </p>
-                        )}
-                        {play.suggesterConfidence && (
-                          <Badge variant="outline" className="mt-1 text-xs">
-                            AI: {play.suggesterConfidence}
-                          </Badge>
-                        )}
-                      </CardContent>
-                    </Card>
+                {/* Play cards */}
+                <div className="space-y-1.5">
+                  {sitPlays.map((play) => (
+                    <div
+                      key={play.id}
+                      className="rounded-lg border border-border/30 bg-surface-raised p-3 space-y-1.5 text-sm"
+                    >
+                      <p className="font-medium text-foreground leading-snug">{play.playName}</p>
+                      {play.formation && (
+                        <p className="text-xs text-muted-foreground">{play.formation}</p>
+                      )}
+                      {play.attacksTendency && (
+                        <p className="text-xs text-cyan-400">
+                          Attacks: {play.attacksTendency}
+                        </p>
+                      )}
+                      {play.suggesterConfidence && (
+                        <span className="tag-chip tag-info">
+                          AI: {play.suggesterConfidence}
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
 
                 {/* Suggestions */}
                 {sitSuggestions.length > 0 && (
-                  <div className="space-y-1 border-t border-dashed border-border pt-2">
-                    <p className="text-xs font-medium text-blue-600">Suggestions:</p>
-                    {sitSuggestions.map(sug => (
-                      <button key={sug.playName} type="button"
+                  <div className="space-y-1.5 pt-1 border-t border-dashed border-border/30">
+                    <p className="text-xs font-display font-semibold uppercase tracking-widest text-blue-400/70 px-1">
+                      Suggestions
+                    </p>
+                    {sitSuggestions.map((sug) => (
+                      <button
+                        key={sug.playName}
+                        type="button"
                         onClick={() => void handleAddPlay(sit.key, sug.playName, sug.formation)}
-                        className="w-full rounded border border-blue-200 bg-blue-50 p-2 text-left text-xs transition-colors hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950 dark:hover:bg-blue-900">
-                        <p className="font-medium">{sug.playName}</p>
-                        <p className="mt-0.5 text-blue-700 dark:text-blue-400">{sug.reasoning}</p>
-                        <Badge variant="outline" className="mt-1 text-xs">{sug.confidence}</Badge>
+                        className="w-full rounded-lg border border-blue-500/20 bg-blue-500/5 p-2.5 text-left text-xs transition-all hover:bg-blue-500/10 hover:border-blue-500/30 space-y-1"
+                      >
+                        <p className="font-medium text-foreground">{sug.playName}</p>
+                        <p className="italic text-blue-400 leading-snug">{sug.reasoning}</p>
+                        <span className="tag-chip tag-info">{sug.confidence}</span>
                       </button>
                     ))}
                   </div>
                 )}
 
-                {/* Actions */}
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="sm" className="flex-1 text-xs"
+                {/* Column actions */}
+                <div className="flex gap-1 pt-0.5">
+                  <button
+                    type="button"
                     onClick={() => {
                       const name = prompt('Play name:');
                       if (name) void handleAddPlay(sit.key, name);
-                    }}>
+                    }}
+                    className="flex-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-white/[0.04] transition-colors border border-border/20 hover:border-border/40"
+                  >
                     + Add
-                  </Button>
-                  <Button variant="ghost" size="sm" className="flex-1 text-xs"
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void handleSuggest(sit.key)}
-                    disabled={loadingSuggestions === sit.key}>
-                    {loadingSuggestions === sit.key ? '...' : 'Suggest'}
-                  </Button>
+                    disabled={loadingSuggestions === sit.key}
+                    className="flex-1 rounded-md px-2 py-1.5 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 transition-colors border border-blue-500/20 hover:border-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.06) 0%, rgba(6,182,212,0.04) 100%)' }}
+                  >
+                    {loadingSuggestions === sit.key ? (
+                      <span className="pulse-dot inline-block">...</span>
+                    ) : 'Suggest'}
+                  </button>
                 </div>
               </div>
             );

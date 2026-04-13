@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { useProgram } from '@/lib/auth/program-context';
 
 const NAV_ITEMS = [
-  { label: 'Hub', href: '/', icon: HubIcon },
+  { label: 'Hub', href: '/hub', icon: HubIcon },
   { label: 'Film Room', href: '/film', icon: FilmIcon },
   { label: 'Scouting', href: '/scouting', icon: ScoutingIcon },
   { label: 'Board', href: '/board', icon: BoardIcon },
@@ -53,10 +53,7 @@ export function Sidebar() {
       <nav className="flex-1 px-3">
         <ul className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
-            const isActive =
-              item.href === '/'
-                ? pathname === '/'
-                : pathname.startsWith(item.href);
+            const isActive = pathname === item.href || (item.href !== '/hub' && pathname.startsWith(item.href));
 
             const Icon = item.icon;
 

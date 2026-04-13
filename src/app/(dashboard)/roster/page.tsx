@@ -3,10 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -88,37 +86,60 @@ export default function RosterPage() {
   const positionGroups = groupByPosition(players);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Roster</h1>
-          <p className="text-muted-foreground">
-            {players.length} player{players.length !== 1 ? 's' : ''}
+          <h1 className="font-display text-3xl font-bold tracking-wide text-foreground">
+            Roster
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="stat-number text-base text-primary">{players.length}</span>
+            {' '}player{players.length !== 1 ? 's' : ''} on the depth chart
           </p>
         </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger className={buttonVariants()}>
-            Add Player
+          <DialogTrigger className={`${buttonVariants()} glow-blue`}>
+            + Add Player
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="glass-card border-border/50">
             <DialogHeader>
-              <DialogTitle>Add Player</DialogTitle>
+              <DialogTitle className="font-display text-xl tracking-wide">
+                Add Player
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleAddPlayer} className="space-y-4">
+            <form onSubmit={handleAddPlayer} className="space-y-4 pt-2">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
-                  <Input id="firstName" name="firstName" required autoFocus />
+                  <Label htmlFor="firstName" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    First Name
+                  </Label>
+                  <Input
+                    id="firstName"
+                    name="firstName"
+                    required
+                    autoFocus
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
-                  <Input id="lastName" name="lastName" required />
+                  <Label htmlFor="lastName" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Last Name
+                  </Label>
+                  <Input
+                    id="lastName"
+                    name="lastName"
+                    required
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="jerseyNumber">Jersey #</Label>
+                  <Label htmlFor="jerseyNumber" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Jersey #
+                  </Label>
                   <Input
                     id="jerseyNumber"
                     name="jerseyNumber"
@@ -126,23 +147,34 @@ export default function RosterPage() {
                     min={0}
                     max={99}
                     required
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50 font-display font-bold"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="grade">Grade/Year</Label>
-                  <Input id="grade" name="grade" placeholder="Sr" />
+                  <Label htmlFor="grade" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Grade / Year
+                  </Label>
+                  <Input
+                    id="grade"
+                    name="grade"
+                    placeholder="Sr"
+                    className="bg-white/[0.03] border-border/50 focus:border-primary/50"
+                  />
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="positions">Positions (comma-separated)</Label>
+                <Label htmlFor="positions" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                  Positions (comma-separated)
+                </Label>
                 <Input
                   id="positions"
                   name="positions"
                   placeholder="QB, ATH"
                   required
+                  className="bg-white/[0.03] border-border/50 focus:border-primary/50"
                 />
               </div>
-              <Button type="submit" className="w-full">
+              <Button type="submit" className="w-full glow-blue">
                 Add Player
               </Button>
             </form>
@@ -150,66 +182,92 @@ export default function RosterPage() {
         </Dialog>
       </div>
 
+      {/* Content */}
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading roster...</p>
+        <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
+          <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-primary" />
+          Loading roster...
+        </div>
       ) : players.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-sm text-muted-foreground">
-              No players yet. Click &quot;Add Player&quot; to build your roster.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="glass-card rounded-xl border border-dashed border-border/50 py-16 text-center animate-fade-in">
+          <p className="text-sm text-muted-foreground">
+            No players yet. Click &ldquo;Add Player&rdquo; to build your roster.
+          </p>
+        </div>
       ) : (
         <div className="space-y-6">
-          {Object.entries(positionGroups).map(([position, groupPlayers]) => (
-            <Card key={position}>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">{position}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-16">#</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Positions</TableHead>
-                      <TableHead>Grade</TableHead>
-                      <TableHead>Join Code</TableHead>
-                      <TableHead className="w-20">Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {groupPlayers.map((player) => (
-                      <TableRow key={player.id}>
-                        <TableCell className="font-mono font-bold">
+          {Object.entries(positionGroups).map(([position, groupPlayers], groupIndex) => (
+            <div
+              key={position}
+              className={`glass-card rounded-xl overflow-hidden animate-fade-in stagger-${Math.min(groupIndex + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6}`}
+            >
+              {/* Section header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border/30 bg-white/[0.02]">
+                <h2 className="font-display text-sm font-bold uppercase tracking-widest text-primary">
+                  {position}
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  {groupPlayers.length} player{groupPlayers.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+
+              {/* Table */}
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border/30 hover:bg-transparent">
+                    <TableHead className="w-16 text-xs font-medium uppercase tracking-widest text-muted-foreground/70">#</TableHead>
+                    <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Name</TableHead>
+                    <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Positions</TableHead>
+                    <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Grade</TableHead>
+                    <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Join Code</TableHead>
+                    <TableHead className="w-20 text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {groupPlayers.map((player) => (
+                    <TableRow
+                      key={player.id}
+                      className="border-border/20 hover:bg-white/[0.03] transition-colors"
+                    >
+                      <TableCell>
+                        <span className="font-display font-bold text-lg text-foreground/90">
                           {player.jerseyNumber}
-                        </TableCell>
-                        <TableCell className="font-medium">
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium text-foreground">
                           {player.firstName} {player.lastName}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            {player.positions.map((pos) => (
-                              <Badge key={pos} variant="secondary" className="text-xs">
-                                {pos}
-                              </Badge>
-                            ))}
-                          </div>
-                        </TableCell>
-                        <TableCell>{player.grade ?? '-'}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {player.joinCode ?? '-'}
-                        </TableCell>
-                        <TableCell>
-                          <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {player.positions.map((pos) => (
+                            <span key={pos} className="tag-chip tag-info">
+                              {pos}
+                            </span>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {player.grade ?? <span className="text-muted-foreground/40">—</span>}
+                      </TableCell>
+                      <TableCell>
+                        {player.joinCode ? (
+                          <span className="font-mono text-xs rounded px-2 py-0.5 bg-white/[0.04] border border-border/40 text-cyan-400 tracking-wider">
+                            {player.joinCode}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-success" />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           ))}
         </div>
       )}
