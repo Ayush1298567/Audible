@@ -34,24 +34,46 @@ interface Play {
   opponentName: string | null;
 }
 
+interface Opponent {
+  id: string;
+  name: string;
+}
+
+function formatSessionType(type: string): string {
+  const map: Record<string, string> = {
+    film_review: 'Film Review',
+    recognition_challenge: 'Recognition',
+    decision_drill: 'Decision Drill',
+    quiz: 'Quiz',
+    walkthrough: 'Walk-Through',
+  };
+  return map[type] ?? type;
+}
+
 export default function PracticeBuilderPage() {
   const { programId } = useProgram();
   const [sessionsList, setSessionsList] = useState<Session[]>([]);
   const [availablePlays, setAvailablePlays] = useState<Play[]>([]);
+  const [opponents, setOpponents] = useState<Opponent[]>([]);
   const [selectedPlays, setSelectedPlays] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [isAutoPlanning, setIsAutoPlanning] = useState(false);
+  const [autoPlanOpen, setAutoPlanOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!programId) return;
-    const [sessionsRes, playsRes] = await Promise.all([
+    const [sessionsRes, playsRes, oppsRes] = await Promise.all([
       fetch(`/api/sessions?programId=${programId}`),
       fetch(`/api/plays?programId=${programId}`),
+      fetch(`/api/opponents?programId=${programId}`),
     ]);
     const sessionsData = await sessionsRes.json();
     const playsData = await playsRes.json();
+    const oppsData = await oppsRes.json();
     setSessionsList(sessionsData.sessions ?? []);
     setAvailablePlays(playsData.plays ?? []);
+    setOpponents(oppsData.opponents ?? []);
     setIsLoading(false);
   }, [programId]);
 
@@ -89,6 +111,31 @@ export default function PracticeBuilderPage() {
     void load();
   }
 
+  async function handleAutoPlan(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setIsAutoPlanning(true);
+    const form = new FormData(e.currentTarget);
+
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'autoPlan',
+        programId,
+        opponentId: form.get('opponentId'),
+        positionGroup: form.get('positionGroup'),
+        focus: form.get('focus'),
+        sessionType: form.get('sessionType'),
+      }),
+    });
+
+    if (res.ok) {
+      setAutoPlanOpen(false);
+      void load();
+    }
+    setIsAutoPlanning(false);
+  }
+
   function togglePlay(playId: string) {
     setSelectedPlays((prev) =>
       prev.includes(playId) ? prev.filter((id) => id !== playId) : [...prev, playId],
@@ -109,8 +156,68 @@ export default function PracticeBuilderPage() {
           </p>
         </div>
 
+        <div className="flex items-center gap-2">
+        <Dialog open={autoPlanOpen} onOpenChange={setAutoPlanOpen}>
+          <DialogTrigger className={`${buttonVariants({ variant: 'outline' })} border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 font-display text-xs uppercase tracking-widest`}>
+            AI Auto-Plan
+          </DialogTrigger>
+          <DialogContent className="glass-card border-border/50">
+            <DialogHeader>
+              <DialogTitle className="font-display text-xl tracking-wide">
+                AI Practice Planner
+              </DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleAutoPlan} className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Opponent
+                </Label>
+                <select name="opponentId" required
+                  className="flex h-10 w-full rounded-lg border border-border/50 bg-white/[0.03] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50">
+                  <option value="">Select...</option>
+                  {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Position Group
+                  </Label>
+                  <select name="positionGroup" required
+                    className="flex h-10 w-full rounded-lg border border-border/50 bg-white/[0.03] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50">
+                    {['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'DB', 'ALL'].map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Session Type
+                  </Label>
+                  <select name="sessionType" required
+                    className="flex h-10 w-full rounded-lg border border-border/50 bg-white/[0.03] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50">
+                    <option value="film_review">Film Review</option>
+                    <option value="recognition_challenge">Recognition Challenge</option>
+                    <option value="decision_drill">Decision Drill</option>
+                    <option value="quiz">Situational Quiz</option>
+                    <option value="walkthrough">Walk-Through</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Focus
+                </Label>
+                <Input name="focus" required placeholder="e.g. Cover 3 recognition against their passing concepts"
+                  className="bg-white/[0.03] border-border/50 focus:border-primary/50" />
+              </div>
+              <Button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest" disabled={isAutoPlanning}>
+                {isAutoPlanning ? 'AI is planning...' : 'Generate Session'}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger className={`${buttonVariants()} glow-blue`}>
+          <DialogTrigger className={`${buttonVariants()} glow-blue font-display text-xs uppercase tracking-widest`}>
             New Session
           </DialogTrigger>
           <DialogContent className="glass-card border-border/50 max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -145,6 +252,9 @@ export default function PracticeBuilderPage() {
                   >
                     <option value="film_review">Film Review</option>
                     <option value="recognition_challenge">Recognition Challenge</option>
+                    <option value="decision_drill">Decision Drill</option>
+                    <option value="quiz">Situational Quiz</option>
+                    <option value="walkthrough">Virtual Walk-Through</option>
                   </select>
                 </div>
               </div>
@@ -228,6 +338,7 @@ export default function PracticeBuilderPage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Sessions list */}
@@ -270,8 +381,13 @@ export default function PracticeBuilderPage() {
 
               {/* Meta row */}
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`tag-chip ${session.sessionType === 'film_review' ? 'tag-info' : 'tag-warning'}`}>
-                  {session.sessionType === 'film_review' ? 'Film Review' : 'Recognition'}
+                <span className={`tag-chip ${
+                  session.sessionType === 'film_review' ? 'tag-info'
+                  : session.sessionType === 'decision_drill' ? 'tag-warning'
+                  : session.sessionType === 'walkthrough' ? 'tag-positive'
+                  : 'tag-neutral'
+                }`}>
+                  {formatSessionType(session.sessionType)}
                 </span>
                 <span className="font-display text-xs font-bold uppercase tracking-widest text-muted-foreground/70">
                   {session.positionGroup}

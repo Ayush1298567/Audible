@@ -16,12 +16,24 @@ const NAV_ITEMS = [
   { label: 'Roster', href: '/roster', icon: RosterIcon },
 ] as const;
 
-export function Sidebar() {
+export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const { programName } = useProgram();
 
   return (
-    <aside className="flex h-full w-60 flex-col border-r border-border/50 bg-[#0d1117]">
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: mobile nav backdrop
+        // biome-ignore lint/a11y/noStaticElementInteractions: mobile nav backdrop
+        <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden" onClick={onClose} />
+      )}
+    <aside className={cn(
+      'flex h-full w-60 flex-col border-r border-border/50 bg-[#0d1117]',
+      'lg:relative lg:translate-x-0',
+      'max-lg:fixed max-lg:z-50 max-lg:transition-transform max-lg:duration-300',
+      isOpen ? 'max-lg:translate-x-0' : 'max-lg:-translate-x-full',
+    )}>
       {/* Logo + Program */}
       <div className="px-5 py-5">
         <div className="flex items-center gap-3">
@@ -90,6 +102,7 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }
 

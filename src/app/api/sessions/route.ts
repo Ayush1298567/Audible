@@ -1,13 +1,14 @@
 import { withProgramContext } from '@/lib/db/client';
-import { sessions, sessionPlays, playerSessionResults, } from '@/lib/db/schema';
+import { sessions, sessionPlays, playerSessionResults, plays, games } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
-import { eq, } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
+import { generateText, Output, gateway } from 'ai';
 
 const createSchema = z.object({
   programId: z.string().uuid(),
   name: z.string().min(1).max(200),
-  sessionType: z.enum(['film_review', 'recognition_challenge']),
+  sessionType: z.enum(['film_review', 'recognition_challenge', 'decision_drill', 'walkthrough', 'quiz']),
   positionGroup: z.string().min(1).max(10),
   scheduledFor: z.string().datetime().optional(),
   estimatedMinutes: z.number().int().min(1).max(60).default(10),
@@ -82,6 +83,110 @@ export async function POST(req: Request): Promise<Response> {
 
         span.done({ sessionId, published: true });
         return Response.json({ published: true });
+      }
+
+      case 'autoPlan': {
+        const autoPlanInput = z.object({
+          programId: z.string().uuid(),
+          opponentId: z.string().uuid(),
+          positionGroup: z.string().min(1).max(10),
+          focus: z.string().min(1).max(200),
+          sessionType: z.enum(['film_review', 'recognition_challenge', 'decision_drill', 'walkthrough', 'quiz']),
+        }).parse(body);
+
+        // Fetch plays for this opponent
+        const opponentPlays = await withProgramContext(autoPlanInput.programId, async (tx) =>
+          tx
+            .select({
+              id: plays.id,
+              down: plays.down,
+              distance: plays.distance,
+              formation: plays.formation,
+              playType: plays.playType,
+              result: plays.result,
+            })
+            .from(plays)
+            .innerJoin(games, eq(plays.gameId, games.id))
+            .where(and(
+              eq(plays.programId, autoPlanInput.programId),
+              eq(games.opponentId, autoPlanInput.opponentId),
+              eq(plays.status, 'ready'),
+            ))
+            .orderBy(desc(plays.createdAt))
+            .limit(100),
+        );
+
+        if (opponentPlays.length === 0) {
+          return Response.json({ error: 'No plays available for this opponent' }, { status: 400 });
+        }
+
+        // Ask AI to select the best plays for this session
+        const playList = opponentPlays.map((p, i) =>
+          `${i}: D${p.down ?? '?'}&${p.distance ?? '?'} ${p.formation ?? '?'} ${p.playType ?? '?'} → ${p.result ?? '?'}`,
+        ).join('\n');
+
+        const selectionSchema = z.object({
+          sessionName: z.string(),
+          selectedIndices: z.array(z.number().int().min(0)).min(3).max(15),
+          estimatedMinutes: z.number().int().min(5).max(30),
+        });
+
+        const { output: aiSelection } = await generateText({
+          model: gateway('anthropic/claude-sonnet-4.6'),
+          output: Output.object({ schema: selectionSchema }),
+          prompt: `You are building a ${autoPlanInput.sessionType.replace(/_/g, ' ')} practice session for the ${autoPlanInput.positionGroup} position group.
+
+Coach's focus: "${autoPlanInput.focus}"
+
+Available plays (index: situation formation playType → result):
+${playList}
+
+Select 8-12 plays that best match the coach's focus. Return the play indices, a good session name, and estimated minutes.`,
+        });
+
+        if (!aiSelection) {
+          return Response.json({ error: 'AI planning failed' }, { status: 500 });
+        }
+
+        // Create the session with selected plays
+        const selectedPlayIds = aiSelection.selectedIndices
+          .filter((i) => i < opponentPlays.length)
+          .map((i) => opponentPlays[i]?.id)
+          .filter((id): id is string => !!id);
+
+        if (selectedPlayIds.length === 0) {
+          return Response.json({ error: 'No valid plays selected' }, { status: 400 });
+        }
+
+        const [autoSession] = await withProgramContext(autoPlanInput.programId, async (tx) =>
+          tx.insert(sessions).values({
+            programId: autoPlanInput.programId,
+            name: aiSelection.sessionName,
+            sessionType: autoPlanInput.sessionType,
+            positionGroup: autoPlanInput.positionGroup,
+            estimatedMinutes: aiSelection.estimatedMinutes,
+          }).returning(),
+        );
+
+        if (!autoSession) throw new Error('Session insert failed');
+
+        const autoPlayInserts = selectedPlayIds.map((playId, i) => ({
+          programId: autoPlanInput.programId,
+          sessionId: autoSession.id,
+          playId,
+          sortOrder: i,
+        }));
+
+        await withProgramContext(autoPlanInput.programId, async (tx) =>
+          tx.insert(sessionPlays).values(autoPlayInserts),
+        );
+
+        span.done({ sessionId: autoSession.id, playCount: selectedPlayIds.length, auto: true });
+        return Response.json({
+          session: autoSession,
+          playCount: selectedPlayIds.length,
+          sessionName: aiSelection.sessionName,
+        }, { status: 201 });
       }
 
       case 'submitResult': {
