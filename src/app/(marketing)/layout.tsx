@@ -23,17 +23,17 @@ export default function MarketingLayout({
             </div>
           </Link>
 
-          {/* Nav links */}
+          {/* Nav links — public only, no dashboard links */}
           <nav className="hidden md:flex items-center gap-8">
             <a href="#features" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Features</a>
             <a href="#how-it-works" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">How It Works</a>
-            <Link href="/hub" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Dashboard</Link>
+            <a href="#pricing" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Pricing</a>
           </nav>
 
-          {/* CTA */}
+          {/* Auth CTAs */}
           <div className="flex items-center gap-3">
             <Link
-              href="/hub"
+              href="/setup"
               className="hidden md:inline-flex font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
             >
               Sign In
@@ -42,7 +42,7 @@ export default function MarketingLayout({
               href="/setup"
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 font-display text-xs font-semibold uppercase tracking-widest text-white shadow-lg shadow-primary/20 transition-all duration-200 hover:bg-primary/90 hover:shadow-primary/30 hover:scale-[1.02] active:scale-[0.98]"
             >
-              Get Started
+              Get Started Free
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M2 6h8M6 2l4 4-4 4"/>
               </svg>
@@ -71,10 +71,11 @@ export default function MarketingLayout({
               </div>
             </div>
 
-            {/* Links */}
+            {/* Links — public pages only */}
             <div className="flex items-center gap-8">
+              <a href="#features" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Features</a>
+              <a href="#how-it-works" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">How It Works</a>
               <Link href="/setup" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Get Started</Link>
-              <Link href="/hub" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Dashboard</Link>
               <Link href="/join" className="font-display text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">Player Login</Link>
             </div>
 

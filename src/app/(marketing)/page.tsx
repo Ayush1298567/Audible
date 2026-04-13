@@ -51,10 +51,10 @@ export default function LandingPage() {
             </svg>
           </Link>
           <Link
-            href="/hub"
+            href="/join"
             className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-8 py-4 font-display text-sm font-semibold uppercase tracking-widest text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-white/[0.06] hover:text-foreground"
           >
-            Open Dashboard
+            Player Login
           </Link>
         </div>
 
