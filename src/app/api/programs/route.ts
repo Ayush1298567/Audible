@@ -1,19 +1,24 @@
 import { db } from '@/lib/db/client';
-import { programs, seasons } from '@/lib/db/schema';
+import { programs, seasons, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
-import { desc } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-// ─── GET: List all programs (no RLS — programs table is unscoped) ──
+// ─── GET: List all programs with play count (prefer programs with data) ──
 
 export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/programs', method: 'GET' }, req);
 
   try {
     const result = await db
-      .select({ id: programs.id, name: programs.name, level: programs.level })
+      .select({
+        id: programs.id,
+        name: programs.name,
+        level: programs.level,
+        playCount: sql<number>`(SELECT COUNT(*) FROM plays WHERE plays.program_id = ${programs.id})`.as('play_count'),
+      })
       .from(programs)
-      .orderBy(desc(programs.id))
+      .orderBy(sql`play_count DESC`)
       .limit(10);
 
     span.done({ count: result.length });

@@ -27,23 +27,25 @@ function DashboardGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading || !isUserLoaded) return;
-    if (programId) return; // already set
 
-    // Try to auto-load an existing program before redirecting to setup
+    // Always check for the best program (one with data)
     fetch('/api/programs')
       .then((res) => res.json())
       .then((data) => {
-        const existing = data.programs?.[0];
-        if (existing) {
-          setProgramId(existing.id, existing.name);
-        } else {
+        const best = data.programs?.[0]; // sorted by play count desc
+        if (best) {
+          // Switch to the program with the most data
+          if (!programId || best.id !== programId) {
+            setProgramId(best.id, best.name);
+          }
+        } else if (!programId) {
           router.replace('/setup');
         }
       })
       .catch(() => {
-        router.replace('/setup');
+        if (!programId) router.replace('/setup');
       });
-  }, [programId, isLoading, isUserLoaded, router, setProgramId]);
+  }, [isLoading, isUserLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading || !isUserLoaded) {
     return (
