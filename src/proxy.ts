@@ -19,6 +19,8 @@ const isPublicRoute = createRouteMatcher([
   '/setup(.*)',
   '/api/health(.*)',
   '/api/player-auth(.*)',
+  '/api/programs',
+  '/_next(.*)',
 ]);
 
 export const proxy = clerkMiddleware(async (auth, request) => {
@@ -35,6 +37,6 @@ export const proxy = clerkMiddleware(async (auth, request) => {
 
 export const proxyConfig = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|css|js|woff|woff2|ttf)$).*)',
   ],
 };
