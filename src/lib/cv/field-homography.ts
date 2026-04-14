@@ -387,10 +387,12 @@ export async function calibrateFieldFromFrame(
   if (!H) return null;
 
   const err = computeReprojectionError(correspondences, H);
-  // Sanity check: if reprojection is wildly off, Claude's labels were
-  // inconsistent. Reject the calibration.
-  if (err > 8) {
-    // >8 yards mean error = unusable
+  // Tightened from 8yd → 4yd. An 8yd reprojection error means player
+  // field positions could be off by a whole defensive shift (a 10-yard
+  // zone concept). That's not "approximate" — it's actively wrong for
+  // coaching decisions. 4yd is the practical boundary between "useful
+  // field-space analytics" and "better to leave it in pixel space."
+  if (err > 4) {
     console.warn('calibration_rejected_high_error', { err, landmarkCount: landmarks.length });
     return null;
   }

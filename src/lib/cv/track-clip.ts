@@ -22,6 +22,7 @@ import { detectPeopleInFrames } from './player-detector';
 import { type PlayerTrack, trackDetections } from './player-tracker';
 import { applyRolesToTracks, inferTrackRoles } from './role-inference';
 import { computePlayAnalytics, type PlayAnalytics } from './track-analytics';
+import { filterNonPlayerTracks, filterOffFieldTracks } from './track-filters';
 
 const execFileAsync = promisify(execFile);
 
@@ -162,27 +163,27 @@ export async function trackPlayersInClip(
   const imageWidth = detections[0]?.imageWidth ?? 640;
   const imageHeight = detections[0]?.imageHeight ?? 360;
 
-  // Step 6: jersey OCR (optional but on by default)
-  let jerseysRead = 0;
-  if (opts.readJerseys !== false && tracks.length > 0) {
-    try {
-      const ocr = await ocrJerseysForTracks({
-        clipPath,
-        tracks,
-        frameWidth: imageWidth,
-        frameHeight: imageHeight,
-      });
-      tracks = applyJerseysToTracks(tracks, ocr.jerseys, ocr.jerseyConfidences);
-      jerseysRead = ocr.jerseysRead;
-    } catch (err) {
-      // Jersey OCR is best-effort — a failure here should NOT kill tracking.
-      console.warn('jersey_ocr_failed', {
-        err: err instanceof Error ? err.message.slice(0, 200) : String(err),
-      });
-    }
+  // Step 5.5: drop non-player tracks BEFORE the expensive Claude calls.
+  // Sideline-band detections (coaches, chain crew, broadcast overlays) and
+  // stationary tracks (refs between plays, spectators, static graphics
+  // mis-detected as people) get filtered here so we don't:
+  //   (a) pay Claude to OCR jerseys on non-players, and
+  //   (b) let them pollute the matchup/tendency aggregators downstream.
+  // Off-field filtering happens later, after homography.
+  {
+    const report = filterNonPlayerTracks(tracks);
+    console.log('track_filter_prehomography', {
+      input: report.inputCount,
+      afterSidelineBand: report.afterSidelineBand,
+      afterStationary: report.afterStationary,
+      survived: report.tracks.length,
+    });
+    tracks = report.tracks;
   }
 
-  // Step 7: field registration (homography → yard coords)
+  // Step 6: field registration (homography → yard coords)
+  // Moved ahead of jersey OCR so we can filter off-field tracks before
+  // paying Claude to OCR their jerseys.
   let fieldRegistered = false;
   let fieldCalibrationError: number | undefined;
   if (opts.registerField !== false && tracks.length > 0) {
@@ -200,7 +201,12 @@ export async function trackPlayersInClip(
         }));
         const H = computeHomographyDLT(correspondences);
         if (H) {
-          // Reprojection error check — reject bad calibrations
+          // Reprojection error check — reject bad calibrations.
+          // Tightened from 8yd → 4yd. An 8-yard calibration error meant
+          // players' field positions could be off by a whole defensive
+          // shift — all the role-inference and off-field logic become
+          // unreliable. 4yd is the boundary between "usable" and
+          // "actively misleading" for coaching decisions.
           let sum = 0;
           for (const c of correspondences) {
             const proj = applyHomography(c.pixel, H);
@@ -210,7 +216,7 @@ export async function trackPlayersInClip(
             sum += Math.sqrt(dx * dx + dy * dy);
           }
           const err = sum / correspondences.length;
-          if (err <= 8) {
+          if (err <= 4) {
             calibration = {
               homography: H,
               landmarks: landmarks.map((l) => ({
@@ -220,6 +226,8 @@ export async function trackPlayersInClip(
               })),
               reprojectionError: err,
             };
+          } else {
+            console.warn('homography_reprojection_too_high', { err, threshold: 4 });
           }
         }
       }
@@ -243,6 +251,40 @@ export async function trackPlayersInClip(
       }
     } catch (err) {
       console.warn('field_calibration_failed', {
+        err: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      });
+    }
+  }
+
+  // Step 6.5: drop off-field tracks now that we have homography. A track
+  // whose mean yard-space position is outside the playing surface (with
+  // small slop) is not a player on the field — it's a sideline person
+  // who happened to move. Filter before paying Claude for OCR.
+  if (fieldRegistered) {
+    const before = tracks.length;
+    tracks = filterOffFieldTracks(tracks);
+    if (tracks.length !== before) {
+      console.log('track_filter_offfield', {
+        dropped: before - tracks.length,
+        survived: tracks.length,
+      });
+    }
+  }
+
+  // Step 7: jersey OCR on surviving tracks (was step 6)
+  let jerseysRead = 0;
+  if (opts.readJerseys !== false && tracks.length > 0) {
+    try {
+      const ocr = await ocrJerseysForTracks({
+        clipPath,
+        tracks,
+        frameWidth: imageWidth,
+        frameHeight: imageHeight,
+      });
+      tracks = applyJerseysToTracks(tracks, ocr.jerseys, ocr.jerseyConfidences);
+      jerseysRead = ocr.jerseysRead;
+    } catch (err) {
+      console.warn('jersey_ocr_failed', {
         err: err instanceof Error ? err.message.slice(0, 200) : String(err),
       });
     }
