@@ -113,16 +113,21 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
     <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm overflow-y-auto">
       <div className="min-h-full flex flex-col">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border/50 px-6 py-3 flex items-center justify-between">
-          <div>
+        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border/50 px-6 py-3 flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
             <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400">
               Scouting Walkthrough
             </p>
-            <p className="font-display text-sm font-bold text-white">{walkthrough.opponentName}</p>
+            <p
+              className="font-display text-sm font-bold text-white truncate"
+              title={walkthrough.opponentName}
+            >
+              {walkthrough.opponentName}
+            </p>
           </div>
 
           {/* Progress dots */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             {insights.map((_, i) => {
               const isActive = view.step === 'insight' && view.insightIdx === i;
               const isDone =
