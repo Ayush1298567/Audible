@@ -801,6 +801,87 @@ export function aggregateRouteVsCoverage(plays: RouteCovPlay[]): RouteVsCoverage
   return cells.slice(0, 8);
 }
 
+// ─── Quarter tendencies ────────────────────────────────────
+
+export interface QuarterTendency {
+  quarter: number;
+  count: number;
+  passPct: number;
+  runPct: number;
+  avgYardsGained: number;
+  explosivePct: number;
+  /** Dominant play type if one concept accounts for ≥50% of snaps. */
+  dominantPlayType?: { name: string; pct: number };
+}
+
+interface QuarterPlay {
+  quarter?: number | null;
+  playType?: string | null;
+  gainLoss?: number | null;
+}
+
+/**
+ * What changes in their play-calling by quarter? "In the 4th they pass
+ * 85%" is a late-game tell the coach plans for (more blitz, cover 1 press).
+ *
+ * Filters:
+ *  - Quarter must be 1-4 (we skip overtime in the rollup — usually small n)
+ *  - ≥3 plays per bucket
+ */
+export function aggregateQuarterTendencies(plays: QuarterPlay[]): QuarterTendency[] {
+  type Bucket = { playTypes: string[]; yards: number[] };
+  const buckets = new Map<number, Bucket>();
+
+  for (const p of plays) {
+    if (!p.quarter || p.quarter < 1 || p.quarter > 4) continue;
+    let b = buckets.get(p.quarter);
+    if (!b) {
+      b = { playTypes: [], yards: [] };
+      buckets.set(p.quarter, b);
+    }
+    if (p.playType) b.playTypes.push(p.playType);
+    if (typeof p.gainLoss === 'number') b.yards.push(p.gainLoss);
+  }
+
+  const avg = (a: number[]): number => (a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const dominant = (a: string[]): { name: string; pct: number } | undefined => {
+    if (a.length === 0) return undefined;
+    const counts = new Map<string, number>();
+    for (const v of a) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best: [string, number] | null = null;
+    for (const entry of counts) {
+      if (!best || entry[1] > best[1]) best = entry;
+    }
+    if (!best) return undefined;
+    const pct = Math.round((best[1] / a.length) * 100);
+    return pct >= 50 ? { name: best[0], pct } : undefined;
+  };
+
+  const result: QuarterTendency[] = [];
+  for (const [quarter, b] of buckets) {
+    if (b.playTypes.length < 3) continue;
+    const passes = b.playTypes.filter((t) => /pass|screen|play action|rpo/i.test(t)).length;
+    const runs = b.playTypes.filter((t) => /run|qb run/i.test(t)).length;
+    const total = b.playTypes.length;
+    const explosives = b.yards.filter((y) => y >= 10).length;
+    result.push({
+      quarter,
+      count: total,
+      passPct: Math.round((passes / total) * 100),
+      runPct: Math.round((runs / total) * 100),
+      avgYardsGained: Number(avg(b.yards).toFixed(1)),
+      explosivePct: b.yards.length > 0
+        ? Math.round((explosives / b.yards.length) * 100)
+        : 0,
+      dominantPlayType: dominant(b.playTypes),
+    });
+  }
+
+  // Keep natural quarter order — 1st through 4th.
+  result.sort((a, b) => a.quarter - b.quarter);
+  return result;
+}
+
 // ─── Motion tendencies ──────────────────────────────────────
 
 export interface MotionTendency {

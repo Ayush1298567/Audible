@@ -16,6 +16,7 @@ import {
   aggregateMatchupsByOffense,
   aggregateMotionTendencies,
   aggregatePersonnelTendencies,
+  aggregateQuarterTendencies,
   aggregateRouteVsCoverage,
   computePlayAnalytics,
   computeSituationalTendencies,
@@ -926,5 +927,92 @@ describe('aggregateMotionTendencies', () => {
     }
     const tendencies = aggregateMotionTendencies(plays);
     expect(tendencies.length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe('aggregateQuarterTendencies', () => {
+  it('returns empty when no plays have quarter info', () => {
+    expect(aggregateQuarterTendencies([])).toEqual([]);
+    expect(
+      aggregateQuarterTendencies([
+        { quarter: null, playType: 'Pass' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('drops quarters below the 3-play noise floor', () => {
+    const plays = [
+      { quarter: 4, playType: 'Pass' },
+      { quarter: 4, playType: 'Pass' },
+    ];
+    expect(aggregateQuarterTendencies(plays)).toEqual([]);
+  });
+
+  it('computes pass/run mix per quarter', () => {
+    const plays = [
+      { quarter: 4, playType: 'Pass', gainLoss: 8 },
+      { quarter: 4, playType: 'Pass', gainLoss: 12 },
+      { quarter: 4, playType: 'Pass', gainLoss: 6 },
+      { quarter: 4, playType: 'Pass', gainLoss: 15 },
+      { quarter: 4, playType: 'Run', gainLoss: 3 },
+    ];
+    const tendencies = aggregateQuarterTendencies(plays);
+    const q4 = tendencies.find((q) => q.quarter === 4);
+    expect(q4).toBeDefined();
+    expect(q4?.passPct).toBe(80);
+    expect(q4?.runPct).toBe(20);
+    expect(q4?.explosivePct).toBe(40); // 2 of 5 ≥10 yards
+  });
+
+  it('surfaces dominant play type when ≥50%', () => {
+    const plays = [
+      { quarter: 1, playType: 'Pass' },
+      { quarter: 1, playType: 'Pass' },
+      { quarter: 1, playType: 'Pass' },
+      { quarter: 1, playType: 'Run' },
+    ];
+    const tendencies = aggregateQuarterTendencies(plays);
+    expect(tendencies[0]?.dominantPlayType?.name).toBe('Pass');
+    expect(tendencies[0]?.dominantPlayType?.pct).toBe(75);
+  });
+
+  it('omits dominant play type below 50%', () => {
+    const plays = [
+      { quarter: 1, playType: 'Pass' },
+      { quarter: 1, playType: 'Pass' },
+      { quarter: 1, playType: 'Run' },
+      { quarter: 1, playType: 'Run' },
+      { quarter: 1, playType: 'Screen' },
+    ];
+    const tendencies = aggregateQuarterTendencies(plays);
+    expect(tendencies[0]?.dominantPlayType).toBeUndefined();
+  });
+
+  it('sorts results in natural Q1→Q4 order', () => {
+    const plays = [
+      { quarter: 4, playType: 'Pass' },
+      { quarter: 4, playType: 'Pass' },
+      { quarter: 4, playType: 'Pass' },
+      { quarter: 2, playType: 'Run' },
+      { quarter: 2, playType: 'Run' },
+      { quarter: 2, playType: 'Run' },
+      { quarter: 1, playType: 'Run' },
+      { quarter: 1, playType: 'Run' },
+      { quarter: 1, playType: 'Run' },
+    ];
+    const tendencies = aggregateQuarterTendencies(plays);
+    expect(tendencies.map((t) => t.quarter)).toEqual([1, 2, 4]);
+  });
+
+  it('ignores quarters outside 1-4 (overtime etc.)', () => {
+    const plays = [
+      { quarter: 0, playType: 'Pass' },
+      { quarter: 0, playType: 'Pass' },
+      { quarter: 0, playType: 'Pass' },
+      { quarter: 5, playType: 'Pass' },
+      { quarter: 5, playType: 'Pass' },
+      { quarter: 5, playType: 'Pass' },
+    ];
+    expect(aggregateQuarterTendencies(plays)).toEqual([]);
   });
 });

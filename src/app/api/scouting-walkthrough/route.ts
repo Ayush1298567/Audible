@@ -7,6 +7,7 @@ import {
   aggregateMatchupsByOffense,
   aggregateMotionTendencies,
   aggregatePersonnelTendencies,
+  aggregateQuarterTendencies,
   aggregateRouteVsCoverage,
   computeSituationalTendencies,
   type PlayAnalytics,
@@ -262,6 +263,15 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Quarter tendencies: how does their play-calling shift by quarter?
+    const quarterTendencies = aggregateQuarterTendencies(
+      allPlays.map((p) => ({
+        quarter: p.quarter,
+        playType: p.playType,
+        gainLoss: p.gainLoss,
+      })),
+    );
+
     // Motion tendencies: pre-snap motion → play direction / type tells.
     const motionTendencies = aggregateMotionTendencies(
       allPlays.map((p) => ({
@@ -349,6 +359,16 @@ ${motionTendencies.map((m) => {
 }).join('\n')}\n`
       : '';
 
+    const quarterHeader = quarterTendencies.length > 0
+      ? `\nQuarter-by-quarter play calling:
+${quarterTendencies.map((q) => {
+  const dom = q.dominantPlayType
+    ? `, ${q.dominantPlayType.name} ${q.dominantPlayType.pct}%`
+    : '';
+  return `  Q${q.quarter} (n=${q.count}): ${q.passPct}% pass / ${q.runPct}% run${dom}, avg ${q.avgYardsGained}yd, explosive ${q.explosivePct}%`;
+}).join('\n')}\n`
+      : '';
+
     const routeCoverageHeader = routeVsCoverage.length > 0
       ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
 ${routeVsCoverage.map((c) => {
@@ -381,10 +401,9 @@ ${situations.map((s) => {
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}${offenseHeader}`
         : '';
 
-    // Route×coverage + situational + personnel + motion headers work
-    // without field-space CV — they use only analysis tags Claude
-    // already produces per play.
-    const analyticsHeader = `${cvHeader}${personnelHeader}${motionHeader}${routeCoverageHeader}${situationalHeader}`;
+    // Every header below this line works without field-space CV —
+    // they use only analysis tags Claude already produces per play.
+    const analyticsHeader = `${cvHeader}${personnelHeader}${motionHeader}${quarterHeader}${routeCoverageHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
