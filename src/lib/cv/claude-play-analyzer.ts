@@ -35,29 +35,21 @@ export const playAnalysisSchema = z.object({
   formation: z.string().describe('Offensive formation (Shotgun Spread, Trips Rt, Pistol, I-Form, Singleback, Empty, Wildcat, etc)'),
   personnel: z.string().describe('Personnel grouping as XY (10, 11, 12, 13, 20, 21, 22, 23)'),
   motion: z.string().describe('Pre-snap motion if any (e.g. "WR motions across", "jet motion right"), or "None"'),
-  preSnapCoverageRead: z.enum([
-    'single_high', 'two_high', 'cover_0_look', 'disguised', 'unknown',
-  ]).describe('What the safeties show pre-snap'),
+  preSnapCoverageRead: z.string().describe('What the safeties show pre-snap (single_high, two_high, cover_0_look, disguised, unknown)'),
 
   // AT/POST-SNAP — determined from motion across frames
-  coverageShell: z.enum([
-    'cover_0', 'cover_1', 'cover_2', 'cover_3', 'cover_4',
-    'quarters', 'man_free', 'man_under', 'unknown',
-  ]).describe('Actual coverage played after any post-snap rotation'),
+  coverageShell: z.string().describe('Actual coverage played (cover_0, cover_1, cover_2, cover_3, cover_4, quarters, man_free, man_under, unknown)'),
   defensiveFront: z.string().describe('Front structure (4-3 Over, 4-3 Under, 3-4, Nickel 4-2-5, Dime 3-3-5, etc)'),
-  pressureType: z.enum([
-    'base_4', 'base_5', 'lb_blitz', 'db_blitz', 'zero_blitz',
-    'dl_stunt', 'lb_stunt', 'no_pressure', 'unknown',
-  ]),
+  pressureType: z.string().describe('Pressure type (base_4, base_5, lb_blitz, db_blitz, zero_blitz, dl_stunt, lb_stunt, no_pressure, unknown)'),
 
   // PLAY EXECUTION
-  playType: z.enum(['Run', 'Pass', 'RPO', 'Screen', 'Play Action', 'QB Run', 'Kneel', 'Spike', 'Punt', 'FG', 'Kickoff', 'Unknown']),
-  playDirection: z.enum(['Left', 'Right', 'Middle', 'N/A']),
+  playType: z.string().describe('Play type (Run, Pass, RPO, Screen, Play Action, QB Run, Kneel, Spike, Punt, FG, Kickoff, Unknown)'),
+  playDirection: z.string().describe('Direction (Left, Right, Middle, N/A)'),
   // Only relevant for runs
-  runGap: z.enum(['A_left', 'A_right', 'B_left', 'B_right', 'C_left', 'C_right', 'D_left', 'D_right', 'N/A']).optional(),
-  blockingScheme: z.enum(['inside_zone', 'outside_zone', 'power', 'counter', 'trap', 'draw', 'pass_pro', 'screen', 'unknown', 'N/A']).optional(),
+  runGap: z.string().optional().describe('Run gap (A_left, A_right, B_left, B_right, C_left, C_right, D_left, D_right, N/A)'),
+  blockingScheme: z.string().optional().describe('Blocking scheme (inside_zone, outside_zone, power, counter, trap, draw, pass_pro, screen, unknown, N/A)'),
   // Only relevant for passes
-  routeConcept: z.enum(['mesh', 'levels', 'flood', 'stick', 'slant_flat', 'four_verts', 'curl_flat', 'spacing', 'screen', 'rpo_glance', 'scramble', 'unknown', 'N/A']).optional(),
+  routeConcept: z.string().optional().describe('Route concept (mesh, levels, flood, stick, slant_flat, four_verts, curl_flat, spacing, screen, rpo_glance, scramble, unknown, N/A)'),
 
   // RESULT
   yardsGained: z.number(),

@@ -152,11 +152,21 @@ export async function claudeAnalyzeOnePlay(
   distance: number,
 ): Promise<PlayAnalysis | null> {
   'use step';
-  return await analyzePlayFromBlob(
-    clipBlobUrl,
-    durationSeconds,
-    down > 0 ? { down, distance } : undefined,
-  );
+  try {
+    return await analyzePlayFromBlob(
+      clipBlobUrl,
+      durationSeconds,
+      down > 0 ? { down, distance } : undefined,
+    );
+  } catch (err) {
+    // If Claude fails on one play, don't nuke the whole pipeline.
+    // Fall back to Gemini's basic tags for this play.
+    console.error('claude_analysis_failed', {
+      clipBlobUrl,
+      error: err instanceof Error ? err.message.slice(0, 200) : String(err),
+    });
+    return null;
+  }
 }
 
 // ─── Stage 4: Persist plays to DB ───────────────────────────
