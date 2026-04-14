@@ -18,6 +18,7 @@ import { games, opponents, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { buildCallSheet } from '@/lib/scouting/call-sheet';
 import type { InsightExample, Walkthrough } from '@/lib/scouting/insights';
+import { buildAnalyticsHeader } from '@/lib/scouting/prompt-headers';
 
 export const maxDuration = 180;
 
@@ -449,92 +450,19 @@ export async function POST(req: Request): Promise<Response> {
     const defenderTendencies = aggregateMatchupsByDefender(matchupAnalyticsInput);
     const offenseTendencies = aggregateMatchupsByOffense(matchupAnalyticsInput);
 
-    const defenderHeader = defenderTendencies.length > 0
-      ? `\nDefender tendencies (most-exploited first, from matchup data):
-${defenderTendencies.map((d) => {
-  const name = d.jersey ? `${d.role} #${d.jersey}` : `${d.role} (jersey unreadable)`;
-  return `  ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
-}).join('\n')}\n`
-      : '';
-
-    const offenseHeader = offenseTendencies.length > 0
-      ? `\nOffensive playmakers (their threats, sorted by consistency of separation):
-${offenseTendencies.map((o) => {
-  const name = o.jersey ? `${o.role} #${o.jersey}` : `${o.role} (jersey unreadable)`;
-  return `  ${name}: ${o.matchupCount} snaps, avg sep ${o.avgSeparationYards}yd, best ${o.bestSeparationYards}yd, avg peak speed ${o.avgMaxSpeedYps} yds/s`;
-}).join('\n')}\n`
-      : '';
-
-    const personnelHeader = personnelTendencies.length > 0
-      ? `\nPersonnel tendencies (what they call out of each grouping):
-${personnelTendencies.map((t) => {
-  const form = t.dominantFormation && t.dominantFormation.pct >= 50
-    ? `, ${t.dominantFormation.name} ${t.dominantFormation.pct}%`
-    : '';
-  return `  ${t.personnel} personnel (n=${t.count}): ${t.passPct}% pass / ${t.runPct}% run${form}, avg ${t.avgYardsGained}yd, explosive ${t.explosivePct}%`;
-}).join('\n')}\n`
-      : '';
-
-    const motionHeader = motionTendencies.length > 0
-      ? `\nMotion tells (pre-snap motion → what happens):
-${motionTendencies.map((m) => {
-  const dir = m.dominantDirection && m.dominantDirection.pct >= 60
-    ? `, ${m.dominantDirection.name} ${m.dominantDirection.pct}%`
-    : '';
-  return `  "${m.motion}" (n=${m.count}): ${m.passPct}% pass / ${m.runPct}% run${dir}, avg ${m.avgYardsGained}yd`;
-}).join('\n')}\n`
-      : '';
-
-    const quarterHeader = quarterTendencies.length > 0
-      ? `\nQuarter-by-quarter play calling:
-${quarterTendencies.map((q) => {
-  const dom = q.dominantPlayType
-    ? `, ${q.dominantPlayType.name} ${q.dominantPlayType.pct}%`
-    : '';
-  return `  Q${q.quarter} (n=${q.count}): ${q.passPct}% pass / ${q.runPct}% run${dom}, avg ${q.avgYardsGained}yd, explosive ${q.explosivePct}%`;
-}).join('\n')}\n`
-      : '';
-
-    const explosiveHeader = explosives.length > 0
-      ? `\nBiggest outlier plays (top gains + top losses, by magnitude):
-${explosives.map((e) => `  [${e.playId}] ${e.blurb}`).join('\n')}\n`
-      : '';
-
-    const routeCoverageHeader = routeVsCoverage.length > 0
-      ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
-${routeVsCoverage.map((c) => {
-  return `  ${c.routeConcept} vs ${c.coverage}: ${c.count} plays, avg ${c.avgYards}yd, best ${c.bestYards}yd, explosive ${c.explosivePct}%`;
-}).join('\n')}\n`
-      : '';
-
-    const situationalHeader = situations.length > 0
-      ? `\nSituational tendencies (by down & distance):
-${situations.map((s) => {
-  const cov = s.dominantCoverage
-    ? `, ${s.dominantCoverage.name} ${s.dominantCoverage.pct}%`
-    : '';
-  const pressure = s.dominantPressure && s.dominantPressure.pct >= 50
-    ? `, ${s.dominantPressure.name} ${s.dominantPressure.pct}%`
-    : '';
-  const rotation = s.rotationPct >= 30
-    ? `, rotates post-snap ${s.rotationPct}%`
-    : '';
-  return `  ${s.situation} (n=${s.count}): ${s.passPct}% pass / ${s.runPct}% run${cov}${pressure}${rotation}, avg ${s.avgYardsGained}yd`;
-}).join('\n')}\n`
-      : '';
-
-    const cvHeader =
-      aggregated.fieldRegisteredPlays > 0
-        ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
-  Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
-  Avg play duration: ${aggregated.avgPlayDurationSeconds.toFixed(1)} s
-  Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
-  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}${offenseHeader}`
-        : '';
-
-    // Every header below this line works without field-space CV —
-    // they use only analysis tags Claude already produces per play.
-    const analyticsHeader = `${cvHeader}${explosiveHeader}${personnelHeader}${motionHeader}${quarterHeader}${routeCoverageHeader}${situationalHeader}`;
+    // All header rendering lives in the pure prompt-headers module so
+    // it's testable without dragging in the DB client.
+    const analyticsHeader = buildAnalyticsHeader({
+      aggregated,
+      defenders: defenderTendencies,
+      offense: offenseTendencies,
+      personnel: personnelTendencies,
+      motions: motionTendencies,
+      quarters: quarterTendencies,
+      explosives,
+      routeVsCoverage,
+      situations,
+    });
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
