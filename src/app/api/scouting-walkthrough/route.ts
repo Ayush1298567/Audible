@@ -202,10 +202,43 @@ export async function POST(req: Request): Promise<Response> {
       return raw ? (raw as PlayAnalytics) : null;
     });
 
+    // Prompt budget guard: on games with lots of plays we send only the most
+    // informative ones as per-play JSON. Everything still contributes to the
+    // aggregated headers — those scale O(1) in the prompt regardless of play
+    // count.
+    const PROMPT_PLAY_CAP = 80;
+
+    // Score each play on "would this be useful evidence for an insight?" —
+    // 3rd downs, explosive plays, plays with matchup data, and unusual results
+    // score higher. Ties broken by play order (newer first).
+    const playScores = allPlays.map((p, idx) => {
+      let score = 0;
+      if (p.down === 3 || p.down === 4) score += 3; // money downs
+      if (typeof p.gainLoss === 'number' && Math.abs(p.gainLoss) >= 15) score += 3; // explosives
+      if (parsedAnalytics[idx]?.keyMatchups?.length) score += 2;
+      if (parsedAnalytics[idx]?.fieldSpace) score += 1;
+      if (p.motion && !/^none$/i.test(p.motion)) score += 1;
+      // Penalty plays and extreme losses are teachable moments too
+      if (typeof p.gainLoss === 'number' && p.gainLoss <= -5) score += 2;
+      return { idx, score };
+    });
+
+    const keptIndices = allPlays.length <= PROMPT_PLAY_CAP
+      ? allPlays.map((_, i) => i)
+      : playScores
+          .sort((a, b) => (b.score - a.score) || (b.idx - a.idx))
+          .slice(0, PROMPT_PLAY_CAP)
+          .map((p) => p.idx)
+          .sort((a, b) => a - b); // restore natural order for Claude's reading flow
+
+    const keptSet = new Set(keptIndices);
+
     // Serialize plays for Claude — include per-play peak speed, depth, duration
     // ONLY when field-space tracking is available. Pixel-space values would
     // mislead Claude into citing fake measurements.
     const playsForPrompt = allPlays.map((p, idx) => {
+      if (!keptSet.has(idx)) return null;
+      // Return actual payload below
       const a = parsedAnalytics[idx];
       const isFieldSpace = a?.fieldSpace === true;
       const deepest = isFieldSpace
@@ -252,7 +285,7 @@ export async function POST(req: Request): Promise<Response> {
             }))
           : undefined,
       };
-    });
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
 
     // Aggregate CV analytics across plays for the "here's the data the coach
     // should know" header Claude sees before the raw play list.
@@ -409,7 +442,7 @@ ${situations.map((s) => {
     const { output } = await generateText({
       model: gateway('anthropic/claude-sonnet-4.6'),
       system: SYSTEM_PROMPT,
-      prompt: `Opponent: ${opp.name}\nTotal plays analyzed: ${allPlays.length}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
+      prompt: `Opponent: ${opp.name}\nTotal plays analyzed: ${allPlays.length}${allPlays.length > playsForPrompt.length ? ` (showing top ${playsForPrompt.length} most informative below — aggregated headers above cover all ${allPlays.length})` : ''}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
       output: Output.object({ schema: responseSchema }),
     });
 
