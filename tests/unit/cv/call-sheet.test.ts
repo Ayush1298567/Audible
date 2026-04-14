@@ -9,7 +9,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { bucketizeSituation, buildCallSheet } from '@/lib/scouting/call-sheet';
+import {
+  bucketizeSituation,
+  buildCallSheet,
+  renderCallSheetAsText,
+} from '@/lib/scouting/call-sheet';
 import type { Insight } from '@/lib/scouting/insights';
 
 // Helper: build a minimal insight with N recommendations.
@@ -145,5 +149,40 @@ describe('buildCallSheet', () => {
     expect(rec?.insightId).toBe('safety-widens');
     expect(rec?.insightHeadline).toBe('SAFETY WIDENS');
     expect(rec?.rationale).toBe('exploits widening FS');
+  });
+});
+
+describe('renderCallSheetAsText', () => {
+  it('emits a terse sideline-card header + body', () => {
+    const sheet = buildCallSheet([
+      mkInsight('i1', 'BURN CB #24', [
+        { situation: '3rd & 8', call: 'Mesh vs Trips Rt', rationale: 'beats C3 rotation' },
+      ]),
+    ]);
+    const text = renderCallSheetAsText({ opponentName: 'Jefferson', callSheet: sheet });
+    expect(text).toContain('CALL SHEET — Jefferson');
+    expect(text).toContain('3RD & LONG');
+    expect(text).toContain('• Mesh vs Trips Rt');
+    expect(text).toContain('beats C3 rotation');
+  });
+
+  it('handles an empty call sheet gracefully', () => {
+    expect(renderCallSheetAsText({ opponentName: 'Jefferson', callSheet: undefined }))
+      .toContain('(no recommendations)');
+    expect(renderCallSheetAsText({ opponentName: 'Jefferson', callSheet: { buckets: [] } }))
+      .toContain('(no recommendations)');
+  });
+
+  it('keeps bucket order from the sheet', () => {
+    const sheet = buildCallSheet([
+      mkInsight('i1', 'I1', [
+        { situation: '1st & 10', call: 'Inside Zone', rationale: 'r' },
+        { situation: '3rd & 8', call: 'Mesh', rationale: 'r' },
+      ]),
+    ]);
+    const text = renderCallSheetAsText({ opponentName: 'Jefferson', callSheet: sheet });
+    const thirdIdx = text.indexOf('3RD & LONG');
+    const baseIdx = text.indexOf('1ST & 10 / BASE');
+    expect(thirdIdx).toBeLessThan(baseIdx);
   });
 });

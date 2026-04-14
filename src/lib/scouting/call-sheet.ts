@@ -7,6 +7,33 @@
 import type { CallSheet, Walkthrough } from './insights';
 
 /**
+ * Render the call sheet as plain text the coach can paste into a doc,
+ * text message, or printable page. Intentionally terse — sideline
+ * cards are scanned, not read.
+ */
+export function renderCallSheetAsText(
+  walkthrough: { opponentName: string; callSheet?: CallSheet },
+): string {
+  const sheet = walkthrough.callSheet;
+  if (!sheet || sheet.buckets.length === 0) {
+    return `CALL SHEET — ${walkthrough.opponentName}\n\n(no recommendations)`;
+  }
+  const lines: string[] = [
+    `CALL SHEET — ${walkthrough.opponentName}`,
+    '',
+  ];
+  for (const bucket of sheet.buckets) {
+    lines.push(`── ${bucket.bucket.toUpperCase()} ──`);
+    for (const rec of bucket.recommendations) {
+      lines.push(`  • ${rec.call}`);
+      lines.push(`    ${rec.rationale}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n').trimEnd();
+}
+
+/**
  * Normalize a free-form situation string into a coarse bucket label so
  * "3rd & long vs Cover 3" and "3rd & 8" land in the same "3rd & long"
  * group. Falls back to the raw situation when no pattern matches.

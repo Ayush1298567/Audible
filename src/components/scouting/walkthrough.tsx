@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { renderCallSheetAsText } from '@/lib/scouting/call-sheet';
 import type { Walkthrough } from '@/lib/scouting/insights';
 import { OverlayVideo } from './overlay-video';
 
@@ -514,19 +515,41 @@ function CallSheetStep({
   onPrev: () => void;
 }) {
   const buckets = walkthrough.callSheet?.buckets ?? [];
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+
+  const handleCopy = async () => {
+    try {
+      const text = renderCallSheetAsText(walkthrough);
+      await navigator.clipboard.writeText(text);
+      setCopyState('copied');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch {
+      setCopyState('error');
+      setTimeout(() => setCopyState('idle'), 2000);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
-          Friday Call Sheet
-        </p>
-        <h1 className="font-display text-3xl font-bold text-white">
-          By situation
-        </h1>
-        <p className="text-slate-400 mt-2">
-          Every recommendation bucketed by when to call it. Print this. Carry it.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
+            Friday Call Sheet
+          </p>
+          <h1 className="font-display text-3xl font-bold text-white">
+            By situation
+          </h1>
+          <p className="text-slate-400 mt-2">
+            Every recommendation bucketed by when to call it. Print this. Carry it.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={handleCopy}
+          className="font-display text-xs uppercase tracking-widest shrink-0"
+        >
+          {copyState === 'copied' ? '✓ Copied' : copyState === 'error' ? 'Copy failed' : 'Copy to clipboard'}
+        </Button>
       </div>
 
       {/* Bucketed card grid */}
