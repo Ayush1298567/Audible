@@ -166,7 +166,7 @@ export async function detectPlayBoundaries(
   // Step 4: Generate content using the file URI
   const genStart = Date.now();
   const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     contents: [
       {
         role: 'user',
