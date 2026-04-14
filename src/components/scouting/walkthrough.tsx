@@ -126,7 +126,9 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
             {insights.map((_, i) => {
               const isActive = view.step === 'insight' && view.insightIdx === i;
               const isDone =
-                view.step === 'summary' || (view.step === 'insight' && view.insightIdx > i);
+                view.step === 'summary' ||
+                view.step === 'call-sheet' ||
+                (view.step === 'insight' && view.insightIdx > i);
               return (
                 <div
                   key={i}
@@ -140,6 +142,23 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
                 />
               );
             })}
+            {/* Extra dots for call-sheet and summary when they exist */}
+            {hasCallSheet && (
+              <div
+                className={`h-1.5 rounded-full transition-all ${
+                  view.step === 'call-sheet'
+                    ? 'w-8 bg-cyan-400'
+                    : view.step === 'summary'
+                      ? 'w-3 bg-cyan-400/50'
+                      : 'w-3 bg-slate-700'
+                }`}
+              />
+            )}
+            <div
+              className={`h-1.5 rounded-full transition-all ${
+                view.step === 'summary' ? 'w-8 bg-cyan-400' : 'w-3 bg-slate-700'
+              }`}
+            />
           </div>
 
           <button
@@ -203,7 +222,7 @@ function IntroStep({ walkthrough, onNext }: { walkthrough: Walkthrough; onNext: 
           Game Plan Preview
         </p>
         <h1 className="font-display text-5xl font-bold text-white">
-          {walkthrough.insights.length} things they&apos;ll do to you
+          {`${walkthrough.insights.length} things they'll do to you`}
         </h1>
         <p className="font-display text-xl text-slate-400 mt-4 max-w-xl">
           Analyzed {walkthrough.playsAnalyzed} plays from {walkthrough.opponentName}. Here are the
@@ -608,8 +627,8 @@ function CallSheetStep({
         ))}
       </div>
 
-      {/* Navigation */}
-      <div className="flex items-center justify-between pt-4">
+      {/* Navigation — hidden when printing */}
+      <div className="flex items-center justify-between pt-4 print:hidden">
         <Button
           variant="ghost"
           onClick={onPrev}

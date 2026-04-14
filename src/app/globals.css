@@ -363,24 +363,46 @@ h1, h2, h3, h4, h5, h6,
     margin: 0.4in;
   }
 
-  /* Hide everything except the call sheet root + its descendants */
-  body * {
-    visibility: hidden;
+  /* Reset the page + modal chrome so only the call sheet flows into print.
+     `display: none` on non-ancestors removes them from layout entirely. */
+  html, body {
+    background: white !important;
+    height: auto !important;
   }
 
+  /* Kill the modal's dark backdrop — it's a full-viewport fixed element
+     that otherwise fills the whole page with #0a0e17. */
+  .fixed.inset-0 {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+
+  /* Same for the inner scroll wrapper (min-h-full flex flex-col). */
   .call-sheet-print-root,
-  .call-sheet-print-root * {
-    visibility: visible;
+  body .fixed.inset-0 > div {
+    background: white !important;
+    color: black !important;
+    min-height: 0 !important;
+    padding: 0 !important;
   }
 
   .call-sheet-print-root {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    background: white !important;
-    color: black !important;
-    padding: 0;
+    overflow: visible !important;
+  }
+
+  /* Collapse the sticky modal header (dots, close button, opponent name)
+     and any siblings of the call sheet that aren't it. */
+  .fixed.inset-0 .sticky {
+    display: none !important;
+  }
+
+  /* Any direct-ancestor chain that's NOT the call sheet stays visible
+     (they're layout wrappers), but leaf siblings collapse. */
+  .fixed.inset-0 > div > *:not(:has(.call-sheet-print-root)):not(.call-sheet-print-root) {
+    display: none !important;
   }
 
   /* Drop glass, gradients, backdrop blur, animations for print */
