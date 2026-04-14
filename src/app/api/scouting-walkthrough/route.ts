@@ -32,6 +32,12 @@ export const maxDuration = 180;
 const requestSchema = z.object({
   programId: z.string().uuid(),
   opponentId: z.string().uuid(),
+  /**
+   * Optional: scope the walkthrough to a single game (e.g. "their most
+   * recent game vs Central"). When omitted, aggregates across every
+   * game we have film for against this opponent.
+   */
+  gameId: z.string().uuid().optional(),
 });
 
 // The schema Claude returns. We'll map to the front-end Walkthrough type.
@@ -227,12 +233,21 @@ export async function POST(req: Request): Promise<Response> {
             eq(plays.programId, input.programId),
             eq(games.opponentId, input.opponentId),
             eq(plays.status, 'ready'),
+            // When gameId is provided, scope to that single game's film.
+            ...(input.gameId ? [eq(plays.gameId, input.gameId)] : []),
           ),
         ),
     );
 
     if (allPlays.length === 0) {
-      return Response.json({ error: 'No plays analyzed for this opponent yet' }, { status: 400 });
+      return Response.json(
+        {
+          error: input.gameId
+            ? 'No plays analyzed for this game yet'
+            : 'No plays analyzed for this opponent yet',
+        },
+        { status: 400 },
+      );
     }
 
     // Parse analytics JSON from coachOverride once per play (we reuse this for
@@ -525,7 +540,7 @@ ${situations.map((s) => {
     const { output } = await generateText({
       model: gateway('anthropic/claude-sonnet-4.6'),
       system: SYSTEM_PROMPT,
-      prompt: `Opponent: ${opp.name}\nTotal plays analyzed: ${allPlays.length}${allPlays.length > playsForPrompt.length ? ` (showing top ${playsForPrompt.length} most informative below — aggregated headers above cover all ${allPlays.length})` : ''}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
+      prompt: `Opponent: ${opp.name}\nScope: ${input.gameId ? 'single game (scouting their most recent look)' : 'every game we have film for'}\nTotal plays analyzed: ${allPlays.length}${allPlays.length > playsForPrompt.length ? ` (showing top ${playsForPrompt.length} most informative below — aggregated headers above cover all ${allPlays.length})` : ''}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
       output: Output.object({ schema: responseSchema }),
     });
 
