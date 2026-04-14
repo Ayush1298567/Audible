@@ -56,31 +56,54 @@ export function UploadVideo({ programId, games, onComplete }: Props) {
 
       setPhase('analyzing');
       setProgress(0);
-      setStatus('Claude is analyzing the film...');
+      setStatus('Gemini is watching the full film and detecting plays...');
 
-      // Step 2: Trigger analysis
-      const res = await fetch('/api/analyze-video', {
+      // Step 2: Start the durable workflow
+      const kickoffRes = await fetch('/api/analyze-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           programId,
           gameId,
           blobUrl: blob.url,
-          startSeconds: startMin * 60,
-          durationSeconds: durMin * 60,
-          sampleInterval: 25,
         }),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? 'Analysis failed');
+      if (!kickoffRes.ok) {
+        const data = await kickoffRes.json();
+        throw new Error(data.error ?? 'Failed to start analysis');
       }
 
-      const data = await res.json();
-      setPhase('done');
-      setStatus(data.message);
-      onComplete();
+      const { runId } = await kickoffRes.json();
+      const startedAt = new Date().toISOString();
+
+      // Step 3: Poll status until workflow completes
+      const pollInterval = 5000; // 5s
+      let done = false;
+
+      while (!done) {
+        await new Promise((r) => setTimeout(r, pollInterval));
+
+        const statusRes = await fetch(
+          `/api/analyze-video/status?runId=${encodeURIComponent(runId)}&programId=${programId}&gameId=${gameId}&since=${encodeURIComponent(startedAt)}`,
+        );
+
+        if (!statusRes.ok) continue;
+
+        const s = await statusRes.json();
+        setStatus(`Workflow ${s.status} · ${s.playsSaved ?? 0} plays saved so far`);
+
+        // Refresh the play list as plays come in
+        onComplete();
+
+        if (s.status === 'completed') {
+          setPhase('done');
+          setStatus(`Analysis complete — ${s.playsSaved ?? 0} plays detected and saved.`);
+          done = true;
+        } else if (s.status === 'failed' || s.status === 'cancelled') {
+          throw new Error(`Workflow ${s.status}`);
+        }
+      }
     } catch (err) {
       setPhase('error');
       setError(err instanceof Error ? err.message : 'Unknown error');

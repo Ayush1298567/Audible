@@ -1,9 +1,5 @@
 import type { NextConfig } from 'next';
-
-// Security headers live in `middleware.ts`, not here. Phase 1 will add:
-//   X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
-// alongside the Clerk middleware, which is the right place for per-request
-// response header manipulation in Next.js 16.
+import { withWorkflow } from 'workflow/next';
 
 const config: NextConfig = {
   // Cache Components (Next.js 16): explicit cache boundaries via `use cache`
@@ -28,4 +24,6 @@ const config: NextConfig = {
   },
 };
 
-export default config;
+// Wrap config with Workflow SDK support. This compiles 'use workflow'
+// and 'use step' directives into durable routes.
+export default withWorkflow(config);

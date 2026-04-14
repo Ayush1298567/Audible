@@ -1,15 +1,16 @@
 import { beginSpan } from '@/lib/observability/log';
 import { z } from 'zod';
+import { start } from 'workflow/api';
 import { gameBreakdownWorkflow } from '@/lib/cv/game-breakdown';
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 /**
- * Kick off the full game breakdown pipeline.
+ * POST /api/analyze-video — kick off the full game-breakdown workflow.
  *
- * The workflow is durable (Vercel Workflow) — it survives the 300s
- * function timeout. This route returns immediately after starting
- * the workflow; the UI polls the DB for plays as they appear.
+ * Returns immediately with a workflow run ID. The workflow runs durably
+ * in the background (Vercel Workflow). Poll GET /api/analyze-video?runId=X
+ * for progress.
  */
 
 const requestSchema = z.object({
@@ -25,24 +26,19 @@ export async function POST(req: Request): Promise<Response> {
     const body = await req.json();
     const input = requestSchema.parse(body);
 
-    // Fire-and-forget the workflow. It persists across function invocations
-    // via Vercel Workflow.
-    const result = await gameBreakdownWorkflow({
+    const run = await start(gameBreakdownWorkflow, [{
       programId: input.programId,
       gameId: input.gameId,
       videoBlobUrl: input.blobUrl,
-    });
+    }]);
 
-    span.done({
-      playsDetected: result.totalPlaysDetected,
-      playsSaved: result.playsSaved,
-    });
+    span.done({ runId: run.runId });
 
     return Response.json({
-      playsDetected: result.totalPlaysDetected,
-      playsSaved: result.playsSaved,
-      message: `Gemini detected ${result.totalPlaysDetected} plays. Claude analyzed ${result.playsSaved} of them. All plays are now in the Film Room with full AI tags.`,
-    });
+      runId: run.runId,
+      status: 'started',
+      message: 'Analysis started. Poll /api/analyze-video/status?runId=... for progress.',
+    }, { status: 202 });
   } catch (error) {
     span.fail(error);
     const msg = error instanceof Error ? error.message : 'Failed';
