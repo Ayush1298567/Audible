@@ -20,8 +20,8 @@ const isPublicRoute = createRouteMatcher([
   '/api/health(.*)',
   '/api/player-auth(.*)',
   '/api/programs',
-  '/api/auto-analyze',
   '/api/analyze-frames',
+  '/api/games',
   '/dev',
   '/_next(.*)',
 ]);
