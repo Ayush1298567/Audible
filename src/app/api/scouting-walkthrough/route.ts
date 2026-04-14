@@ -4,7 +4,7 @@ import { plays, games, opponents } from '@/lib/db/schema';
 import { generateText, Output, gateway } from 'ai';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import type { Walkthrough } from '@/lib/scouting/insights';
+import type { Walkthrough, InsightExample } from '@/lib/scouting/insights';
 
 export const maxDuration = 180;
 
@@ -163,12 +163,25 @@ export async function POST(req: Request): Promise<Response> {
           .map((pid) => {
             const p = playMap.get(pid);
             if (!p || !p.clipBlobKey) return null;
+            // Extract tracks from coachOverride JSON if present
+            let tracks: InsightExample['tracks'] = undefined;
+            const rawTracks = (p.coachOverride as { tracks?: string | unknown })?.tracks;
+            if (typeof rawTracks === 'string') {
+              try {
+                tracks = JSON.parse(rawTracks);
+              } catch {
+                tracks = undefined;
+              }
+            } else if (Array.isArray(rawTracks)) {
+              tracks = rawTracks as InsightExample['tracks'];
+            }
             return {
               playId: pid,
               label: `${p.down ?? '?'}&${p.distance ?? '?'} · Q${p.quarter ?? '?'} · ${p.formation ?? ''}`.trim(),
               clipUrl: p.clipBlobKey,
               description: `${p.playType ?? 'Play'} ${p.playDirection ?? ''} — ${p.result ?? `${p.gainLoss ?? 0} yd`}`.trim(),
               overlays: ins.overlays_per_play[pid] ?? [],
+              tracks,
             };
           })
           .filter((x): x is NonNullable<typeof x> => x !== null),

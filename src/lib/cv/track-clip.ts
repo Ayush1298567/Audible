@@ -1,0 +1,117 @@
+/**
+ * Run detection + tracking on a single clip (by Blob URL).
+ *
+ * Fetches the clip, extracts frames at configurable fps,
+ * runs Roboflow detection on each, associates into tracks.
+ */
+
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { detectPeopleInFrames } from './player-detector';
+import { trackDetections, type PlayerTrack } from './player-tracker';
+
+const execFileAsync = promisify(execFile);
+
+function getFfmpegPath(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const installer = require('@ffmpeg-installer/ffmpeg');
+    return installer.path;
+  } catch {
+    return 'ffmpeg';
+  }
+}
+
+export interface TrackClipOptions {
+  /** How many frames per second to sample. Default 2 (every 0.5s). */
+  fps?: number;
+  /** Roboflow confidence threshold. Default 30. */
+  confidence?: number;
+  /** Roboflow API key override. */
+  apiKey?: string;
+}
+
+export interface TrackClipResult {
+  tracks: PlayerTrack[];
+  imageWidth: number;
+  imageHeight: number;
+  frameCount: number;
+  /** Seconds taken to detect + track. */
+  durationMs: number;
+}
+
+/**
+ * Download a clip, extract frames, detect + track people.
+ */
+export async function trackPlayersInClip(
+  clipBlobUrl: string,
+  clipDurationSeconds: number,
+  opts: TrackClipOptions = {},
+): Promise<TrackClipResult> {
+  const startTime = Date.now();
+  const fps = opts.fps ?? 2;
+
+  // Step 1: download clip
+  const res = await fetch(clipBlobUrl);
+  if (!res.ok) throw new Error(`fetch clip failed: ${res.status}`);
+  const clipBuffer = Buffer.from(await res.arrayBuffer());
+  const clipPath = join(tmpdir(), `trk-${randomUUID()}.mp4`);
+  await writeFile(clipPath, clipBuffer);
+
+  // Step 2: build list of timestamps to sample
+  const timestamps: number[] = [];
+  const step = 1 / fps;
+  for (let t = 0.2; t < clipDurationSeconds - 0.1; t += step) {
+    timestamps.push(Number(t.toFixed(2)));
+  }
+
+  // Step 3: extract each frame with ffmpeg
+  const ffmpeg = getFfmpegPath();
+  const frames: Array<{ timestamp: number; base64: string }> = [];
+
+  for (const t of timestamps) {
+    const framePath = join(tmpdir(), `trk-${randomUUID()}.jpg`);
+    try {
+      await execFileAsync(ffmpeg, [
+        '-y',
+        '-ss', String(t),
+        '-i', clipPath,
+        '-frames:v', '1',
+        '-q:v', '3',
+        '-vf', 'scale=640:-1',
+        '-update', '1',
+        framePath,
+      ], { timeout: 15000 });
+      const buf = await readFile(framePath);
+      frames.push({ timestamp: t, base64: buf.toString('base64') });
+      await unlink(framePath).catch(() => {});
+    } catch {
+      // skip bad frames
+    }
+  }
+
+  // Step 4: run detection in parallel
+  const detections = await detectPeopleInFrames(frames, {
+    confidence: opts.confidence,
+    apiKey: opts.apiKey,
+    concurrency: 5,
+  });
+
+  // Step 5: track
+  const tracks = trackDetections(detections);
+
+  // Cleanup
+  await unlink(clipPath).catch(() => {});
+
+  return {
+    tracks,
+    imageWidth: detections[0]?.imageWidth ?? 640,
+    imageHeight: detections[0]?.imageHeight ?? 360,
+    frameCount: frames.length,
+    durationMs: Date.now() - startTime,
+  };
+}

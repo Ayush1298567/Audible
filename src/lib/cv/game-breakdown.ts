@@ -19,6 +19,8 @@ import { plays } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { detectPlayBoundaries, type DetectedPlay } from './gemini-boundary';
 import { analyzePlayFromBlob, type PlayAnalysis } from './claude-play-analyzer';
+import { trackPlayersInClip } from './track-clip';
+import type { PlayerTrack } from './player-tracker';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -209,6 +211,33 @@ export async function claudeAnalyzeOnePlay(
   }
 }
 
+/**
+ * Run player detection + tracking on a single clip.
+ * Step-level so Workflow can retry individual plays.
+ */
+export async function trackPlayersForOnePlay(
+  clipBlobUrl: string,
+  durationSeconds: number,
+): Promise<PlayerTrack[]> {
+  'use step';
+  try {
+    const result = await trackPlayersInClip(clipBlobUrl, durationSeconds, { fps: 2 });
+    console.log('tracking_done', {
+      clipBlobUrl,
+      tracks: result.tracks.length,
+      frames: result.frameCount,
+      durationMs: result.durationMs,
+    });
+    return result.tracks;
+  } catch (err) {
+    console.error('tracking_failed', {
+      clipBlobUrl,
+      error: err instanceof Error ? err.message.slice(0, 200) : String(err),
+    });
+    return [];
+  }
+}
+
 // ─── Stage 4: Persist plays to DB ───────────────────────────
 
 export async function savePlayToDb(
@@ -218,6 +247,7 @@ export async function savePlayToDb(
   boundary: DetectedPlay,
   clipBlobUrl: string,
   analysis: PlayAnalysis | null,
+  tracks: PlayerTrack[] = [],
 ): Promise<string> {
   'use step';
 
@@ -260,9 +290,11 @@ export async function savePlayToDb(
         aiConfidence: String(analysis.confidence),
         aiReasoning: analysis.reasoning,
         aiObservations: analysis.keyObservations.join(' | '),
+        tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
       } : {
         aiConfidence: String(boundary.confidence),
         geminiOnly: 'true',
+        tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
       },
     }).returning({ id: plays.id }),
   );
@@ -294,18 +326,16 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
   // Stage 2: Extract each play's clip
   const clips = await extractPlayClips(job.videoBlobUrl, boundaries);
 
-  // Stage 3 + 4: Claude analyzes each clip and saves to DB (parallelized)
+  // Stage 3 + 4: Claude analyzes + Roboflow tracks each clip, then saves to DB
   let saved = 0;
   for (let i = 0; i < clips.length; i++) {
     const { blobUrl, durationSeconds, boundary } = clips[i]!;
 
-    // Each claude call + DB save is its own step (durable/retryable)
-    const analysis = await claudeAnalyzeOnePlay(
-      blobUrl,
-      durationSeconds,
-      boundary.down,
-      boundary.distance,
-    );
+    // Each call is its own durable step (retryable independently)
+    const [analysis, tracks] = await Promise.all([
+      claudeAnalyzeOnePlay(blobUrl, durationSeconds, boundary.down, boundary.distance),
+      trackPlayersForOnePlay(blobUrl, durationSeconds),
+    ]);
 
     await savePlayToDb(
       job.programId,
@@ -314,6 +344,7 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
       boundary,
       blobUrl,
       analysis,
+      tracks,
     );
 
     saved++;

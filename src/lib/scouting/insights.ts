@@ -43,6 +43,15 @@ export interface InsightExample {
   description: string;
   /** Overlays synced to this clip's timeline. */
   overlays: ClipOverlay[];
+  /** Optional player tracks rendered as moving dots on the clip. */
+  tracks?: Array<{
+    trackId: string;
+    points: Array<{ t: number; x: number; y: number; w: number; h: number; confidence: number }>;
+    jersey?: string;
+    role?: string;
+  }>;
+  /** Track IDs Claude wants highlighted for this insight. */
+  highlightTrackIds?: string[];
 }
 
 // ─── A single actionable tendency ────────────────────────────
