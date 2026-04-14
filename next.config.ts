@@ -16,7 +16,6 @@ const config: NextConfig = {
     '@ffprobe-installer/ffprobe',
     'fluent-ffmpeg',
     '@react-pdf/renderer',
-    '@distube/ytdl-core',
   ],
   // Image domains: Vercel Blob public CDN (if we ever use public blobs)
   images: {

@@ -21,6 +21,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/player-auth(.*)',
   '/api/programs',
   '/api/auto-analyze',
+  '/api/analyze-frames',
   '/dev',
   '/_next(.*)',
 ]);

@@ -17,7 +17,6 @@ import { DrawingCanvas } from '@/components/film/drawing-canvas';
 import { CorrectableTag } from '@/components/film/tag-correction';
 import { CollectionsPanel } from '@/components/film/collections-panel';
 import { YouTubeImport } from '@/components/film/youtube-import';
-import { AutoAnalyze } from '@/components/film/auto-analyze';
 
 interface Play {
   id: string;
@@ -208,13 +207,33 @@ export default function FilmRoomPage() {
           </button>
         </div>
 
-        {/* Auto-analyze (default) */}
-        {importMode === 'auto' && programId && (
-          <AutoAnalyze
-            programId={programId}
-            games={games.map(g => ({ id: g.id, opponentName: g.opponentName }))}
-            onComplete={() => void loadPlays()}
-          />
+        {/* Auto-analyze info (run locally via CLI) */}
+        {importMode === 'auto' && (
+          <div className="glass-card rounded-xl p-5 space-y-4 border-l-2 border-l-cyan-500/50">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                <svg className="h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-display text-sm font-semibold text-white">AI Auto-Analyze (Local CLI)</p>
+                <p className="text-xs text-slate-500">YouTube blocks Vercel servers. Run from your Mac where it works.</p>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-slate-950/50 border border-slate-800/50 p-4 font-mono text-xs text-slate-300 space-y-2">
+              <div className="text-slate-500"># 1. Install yt-dlp on your Mac (one time)</div>
+              <div>brew install yt-dlp</div>
+              <div className="text-slate-500 pt-2"># 2. Run analysis (URL, start min, duration min)</div>
+              <div>bun scripts/analyze-youtube.ts "https://youtube.com/watch?v=R0vPvIgVBZo" 10 5</div>
+            </div>
+
+            <p className="text-[10px] text-slate-500">
+              This downloads the video locally, extracts frames, and sends them to Claude via the AI Gateway.
+              Cost: ~$0.003/frame × 12 frames per 5min = ~$0.04. New plays appear in the grid below.
+            </p>
+          </div>
         )}
 
         {/* Manual YouTube marking */}
