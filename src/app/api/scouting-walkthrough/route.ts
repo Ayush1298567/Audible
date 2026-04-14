@@ -43,10 +43,42 @@ const curatedInsightSchema = z.object({
     .max(5)
     .describe('Play IDs that best demonstrate this. 1-5 clips.'),
   recommendations: z
-    .array(z.string().min(5).max(120))
+    .array(
+      z.object({
+        situation: z
+          .string()
+          .max(80)
+          .describe(
+            'When to use this — e.g. "3rd & long vs Cover 3 rotation", ' +
+              '"red zone, 11 personnel", "when they motion jet right". ' +
+              'Should mirror tendency triggers the coach can recognize live.',
+          ),
+        call: z
+          .string()
+          .min(3)
+          .max(80)
+          .describe(
+            'The concrete play-call the coach would yell — "Mesh vs Rt Trips", ' +
+              '"Power Read with a wheel tag", "Cover 1 Robber". Must be a name ' +
+              'a football coach would recognize.',
+          ),
+        rationale: z
+          .string()
+          .min(10)
+          .max(200)
+          .describe(
+            'One sentence: why this works against that situation, ideally ' +
+              'citing a measurement ("beats the 60% Cover 3 rotation", ' +
+              '"exploits CB #24 giving up 3.2yd avg sep").',
+          ),
+      }),
+    )
     .min(1)
     .max(4)
-    .describe('Concrete plays the coach should call'),
+    .describe(
+      'Structured play recommendations: each has a situation trigger, ' +
+        'a concrete call, and a rationale grounded in the CV data.',
+    ),
   overlays_per_play: z
     .record(
       z.string(),
@@ -88,8 +120,15 @@ Rules:
 1. Every tendency must be SPECIFIC enough to call a play against. NOT "they run Cover 2" —
    instead "they run Cover 2 on 3rd & long with the free safety widening post-snap".
 2. Every tendency needs evidence: at least 3 plays showing the pattern.
-3. Recommendations must be concrete play calls the coach would recognize
-   ("Run 4 Verts from Trips Right", "Call Mesh with a post over the top").
+3. Recommendations are STRUCTURED: each has a situation, a call, and a
+   rationale.
+   - situation: when this fires ("3rd & long vs Cover 3 rotation")
+   - call: the concrete play-call a coach would yell ("Mesh vs Trips Rt",
+     "Power Read with a wheel tag", "Cover 1 Robber")
+   - rationale: one sentence grounding in the data ("beats their 60% Cover
+     3 rotation on 3rd & long — they give up 11yd avg on Mesh in film")
+   Every recommendation's rationale should cite a concrete number from the
+   headers when possible. Generic rationales are failure.
 4. Rank by exploitability — #1 should be the biggest edge.
 5. For each evidence play, provide 1-4 visual overlays that highlight the key
    moment(s). Normalized 0-1 coords:

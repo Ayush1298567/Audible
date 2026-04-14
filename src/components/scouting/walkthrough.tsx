@@ -276,13 +276,19 @@ function InsightStep({
           <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-3">
             Attack this with
           </p>
-          <ul className="space-y-2">
+          <ul className="space-y-3">
             {insight.recommendations.map((r, i) => (
-              <li key={i} className="flex items-start gap-3 text-sm text-slate-200">
+              <li key={i} className="flex items-start gap-3">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-500/15 text-[10px] font-bold text-cyan-400 mt-0.5">
                   {i + 1}
                 </span>
-                <span>{r}</span>
+                <div className="flex-1 space-y-1">
+                  <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400/70">
+                    {r.situation}
+                  </p>
+                  <p className="text-sm font-semibold text-white">{r.call}</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">{r.rationale}</p>
+                </div>
               </li>
             ))}
           </ul>
@@ -433,11 +439,14 @@ function SummaryStep({
               <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
                 Call these plays
               </p>
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {i.recommendations.map((r, idx) => (
-                  <li key={idx} className="text-sm text-slate-200 flex gap-2">
-                    <span className="text-cyan-400">•</span>
-                    <span>{r}</span>
+                  <li key={idx} className="flex gap-2 items-baseline">
+                    <span className="text-cyan-400 shrink-0">•</span>
+                    <div>
+                      <span className="text-sm font-semibold text-white">{r.call}</span>
+                      <span className="text-xs text-slate-500"> — {r.situation}</span>
+                    </div>
                   </li>
                 ))}
               </ul>

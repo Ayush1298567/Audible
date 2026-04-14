@@ -73,6 +73,20 @@ export interface InsightExample {
 
 // ─── A single actionable tendency ────────────────────────────
 
+/**
+ * A single structured play-call recommendation. Split so the walkthrough UI
+ * can render it as a situation → call → rationale card and so future
+ * features (call-sheet generation, practice script) can index on situation.
+ */
+export interface Recommendation {
+  /** When to use it ("3rd & long vs Cover 3 rotation"). */
+  situation: string;
+  /** The concrete play-call ("Mesh vs Trips Rt"). */
+  call: string;
+  /** Why it works, ideally citing a measurement. */
+  rationale: string;
+}
+
 export interface Insight {
   /** Stable id — usually a slug of the headline. */
   id: string;
@@ -85,7 +99,7 @@ export interface Insight {
   /** Minimum 1, typically 2-3 example clips. */
   examples: InsightExample[];
   /** Concrete plays/calls the coach should use against this tendency. */
-  recommendations: string[];
+  recommendations: Recommendation[];
   /** Number of supporting plays (sample size). */
   evidenceCount: number;
 }
