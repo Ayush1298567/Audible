@@ -550,7 +550,7 @@ function CallSheetStep({
 
   return (
     <div className="space-y-6 animate-fade-in call-sheet-print-root">
-      <div className="flex items-start justify-between gap-4 print:hidden">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 print:hidden">
         <div>
           <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
             Friday Call Sheet
@@ -562,7 +562,7 @@ function CallSheetStep({
             Every recommendation bucketed by when to call it. Print this. Carry it.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 md:shrink-0">
           <Button
             variant="outline"
             onClick={handleCopy}
