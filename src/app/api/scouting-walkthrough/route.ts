@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregateMatchupsByOffense,
   aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computeSituationalTendencies,
@@ -102,6 +103,9 @@ Rules:
    the whole opponent film. A DB appearing in 5+ matchups with >3 yds avg
    separation is a dominant tendency — at least one of your insights should
    target them by name.
+   The OFFENSIVE-PLAYMAKERS block mirrors this for their skill players —
+   use it to flag "their WR #88 is the threat, bracket him" style alerts
+   so the coach's defensive call isn't just symmetrical to their offense.
 8. For each evidence play, populate highlight_tracks_per_play with the
    track IDs the coach should watch — typically the offense/defense pair
    from the key matchup (trackIds in the matchups array). This is what
@@ -286,15 +290,25 @@ export async function POST(req: Request): Promise<Response> {
 
     // Roll up every matchup by the defender's jersey+role so we can point
     // Claude at specific exploitable defenders instead of just "the corner".
-    const defenderTendencies = aggregateMatchupsByDefender(
-      allPlays.map((_, idx) => ({ analytics: parsedAnalytics[idx] ?? null })),
-    );
+    const matchupAnalyticsInput = allPlays.map((_, idx) => ({
+      analytics: parsedAnalytics[idx] ?? null,
+    }));
+    const defenderTendencies = aggregateMatchupsByDefender(matchupAnalyticsInput);
+    const offenseTendencies = aggregateMatchupsByOffense(matchupAnalyticsInput);
 
     const defenderHeader = defenderTendencies.length > 0
       ? `\nDefender tendencies (most-exploited first, from matchup data):
 ${defenderTendencies.map((d) => {
   const name = d.jersey ? `${d.role} #${d.jersey}` : `${d.role} (jersey unreadable)`;
   return `  ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
+}).join('\n')}\n`
+      : '';
+
+    const offenseHeader = offenseTendencies.length > 0
+      ? `\nOffensive playmakers (their threats, sorted by consistency of separation):
+${offenseTendencies.map((o) => {
+  const name = o.jersey ? `${o.role} #${o.jersey}` : `${o.role} (jersey unreadable)`;
+  return `  ${name}: ${o.matchupCount} snaps, avg sep ${o.avgSeparationYards}yd, best ${o.bestSeparationYards}yd, avg peak speed ${o.avgMaxSpeedYps} yds/s`;
 }).join('\n')}\n`
       : '';
 
@@ -337,7 +351,7 @@ ${situations.map((s) => {
   Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
   Avg play duration: ${aggregated.avgPlayDurationSeconds.toFixed(1)} s
   Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
-  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}`
+  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}${offenseHeader}`
         : '';
 
     // Route×coverage + situational + personnel headers work without

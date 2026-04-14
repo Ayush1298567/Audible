@@ -829,6 +829,89 @@ export interface DefenderTendency {
 }
 
 /**
+ * Offensive-side symmetric rollup — who's making things happen on offense.
+ * "Their WR #88 averages 11 yds of depth over 7 snaps with an avg peak of
+ * 8.1 yds/s" tells the coach which receivers are the threats.
+ */
+export interface OffensiveTendency {
+  jersey?: string;
+  role: string;
+  /** Number of matchups this player was an offensive side in. */
+  matchupCount: number;
+  /** Average peak speed they hit across plays. */
+  avgMaxSpeedYps: number;
+  /** Best separation they created (biggest win vs a defender). */
+  bestSeparationYards: number;
+  /** Average separation they got. */
+  avgSeparationYards: number;
+  /** Track IDs (one per play). */
+  trackIds: string[];
+}
+
+export function aggregateMatchupsByOffense(
+  plays: Array<{ analytics: PlayAnalytics | null }>,
+): OffensiveTendency[] {
+  type Bucket = {
+    jersey?: string;
+    role: string;
+    speeds: number[];
+    seps: number[];
+    trackIds: string[];
+  };
+
+  const buckets = new Map<string, Bucket>();
+
+  for (const p of plays) {
+    if (!p.analytics?.keyMatchups) continue;
+    for (const m of p.analytics.keyMatchups) {
+      const key = `${m.offense.role}#${m.offense.jersey ?? 'unknown'}`;
+      let b = buckets.get(key);
+      if (!b) {
+        b = {
+          jersey: m.offense.jersey,
+          role: m.offense.role,
+          speeds: [],
+          seps: [],
+          trackIds: [],
+        };
+        buckets.set(key, b);
+      }
+      b.speeds.push(m.offenseMaxSpeedYps);
+      b.seps.push(m.minSeparationYards);
+      b.trackIds.push(m.offense.trackId);
+    }
+  }
+
+  const avg = (arr: number[]): number =>
+    arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+
+  const tendencies: OffensiveTendency[] = [];
+  for (const b of buckets.values()) {
+    if (b.speeds.length < 2) continue;
+    tendencies.push({
+      jersey: b.jersey,
+      role: b.role,
+      matchupCount: b.speeds.length,
+      avgMaxSpeedYps: Number(avg(b.speeds).toFixed(1)),
+      // "Best" on offense = max separation (they beat coverage worst).
+      bestSeparationYards: Number(Math.max(...b.seps).toFixed(1)),
+      avgSeparationYards: Number(avg(b.seps).toFixed(1)),
+      trackIds: b.trackIds,
+    });
+  }
+
+  // Rank by avgSeparation × log1p(matchupCount) — consistent separation
+  // across many plays is the bigger story than one big win.
+  tendencies.sort((a, b) => {
+    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount);
+    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount);
+    return scoreB - scoreA;
+  });
+
+  return tendencies.slice(0, 6);
+}
+
+/**
  * Across every matchup extracted from the opponent's plays, roll up by
  * defender identity (jersey + role is the key, since trackId is per-clip).
  * Defenders without jerseys fall into a single bucket per role.

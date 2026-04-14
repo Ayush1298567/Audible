@@ -13,6 +13,7 @@ import type { PlayerTrack, TrackPoint } from '@/lib/cv/player-tracker';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregateMatchupsByOffense,
   aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computePlayAnalytics,
@@ -769,5 +770,75 @@ describe('aggregatePersonnelTendencies', () => {
     }
     const tendencies = aggregatePersonnelTendencies(plays);
     expect(tendencies.length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe('aggregateMatchupsByOffense', () => {
+  const roleTrack = (
+    id: string,
+    role: string,
+    points: Array<[number, number, number]>,
+    jersey?: string,
+  ): PlayerTrack => ({
+    trackId: id,
+    role,
+    jersey,
+    points: points.map(([t, fx, fy]): TrackPoint => ({
+      t,
+      x: 0.5, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9,
+      fx, fy,
+    })),
+  });
+
+  it('rolls up by offensive jersey+role across plays', () => {
+    // WR #88 gets 4 yds separation in 3 plays vs a CB.
+    const makePlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [1, 40, 5], [2, 50, 5]], '88'),
+      roleTrack(`cb-${suffix}`, 'CB', [[0, 32, 9], [1, 42, 9], [2, 52, 9]], '24'),
+    ]);
+
+    const tendencies = aggregateMatchupsByOffense([
+      { analytics: makePlay('a') },
+      { analytics: makePlay('b') },
+      { analytics: makePlay('c') },
+    ]);
+
+    expect(tendencies).toHaveLength(1);
+    expect(tendencies[0]?.jersey).toBe('88');
+    expect(tendencies[0]?.role).toBe('WR');
+    expect(tendencies[0]?.matchupCount).toBe(3);
+    expect(tendencies[0]?.trackIds).toHaveLength(3);
+    // sep = sqrt(2^2 + 4^2) = sqrt(20) ≈ 4.47
+    expect(tendencies[0]?.avgSeparationYards).toBeCloseTo(4.47, 1);
+    expect(tendencies[0]?.bestSeparationYards).toBeCloseTo(4.47, 1);
+  });
+
+  it('filters out one-play cameos', () => {
+    const oneShot = computePlayAnalytics([
+      roleTrack('wr', 'WR', [[0, 30, 5], [2, 50, 5]], '88'),
+      roleTrack('cb', 'CB', [[0, 32, 9], [2, 52, 9]], '24'),
+    ]);
+    expect(aggregateMatchupsByOffense([{ analytics: oneShot }])).toEqual([]);
+  });
+
+  it('ranks playmakers with higher avg separation first', () => {
+    const goodWRPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`good-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], '88'),
+      // Far-away defender → big separation
+      roleTrack(`cb-${suffix}`, 'CB', [[0, 32, 15], [2, 52, 15]], '24'),
+    ]);
+    const badRBPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`rb-${suffix}`, 'RB', [[0, 30, 26], [2, 34, 26]], '22'),
+      // Tight coverage → tiny separation
+      roleTrack(`lb-${suffix}`, 'LB', [[0, 30.5, 26.5], [2, 34.5, 26.5]], '50'),
+    ]);
+
+    const tendencies = aggregateMatchupsByOffense([
+      { analytics: goodWRPlay('1') },
+      { analytics: goodWRPlay('2') },
+      { analytics: badRBPlay('1') },
+      { analytics: badRBPlay('2') },
+    ]);
+    expect(tendencies[0]?.jersey).toBe('88'); // WR #88 beats RB #22 on avgSep × count
   });
 });
