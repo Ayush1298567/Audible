@@ -21,6 +21,7 @@ import { detectPlayBoundaries, type DetectedPlay } from './gemini-boundary';
 import { analyzePlayFromBlob, type PlayAnalysis } from './claude-play-analyzer';
 import { trackPlayersInClip } from './track-clip';
 import type { PlayerTrack } from './player-tracker';
+import type { PlayAnalytics } from './track-analytics';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -218,7 +219,7 @@ export async function claudeAnalyzeOnePlay(
 export async function trackPlayersForOnePlay(
   clipBlobUrl: string,
   durationSeconds: number,
-): Promise<PlayerTrack[]> {
+): Promise<{ tracks: PlayerTrack[]; analytics: PlayAnalytics | null }> {
   'use step';
   try {
     const result = await trackPlayersInClip(clipBlobUrl, durationSeconds, { fps: 2 });
@@ -229,15 +230,16 @@ export async function trackPlayersForOnePlay(
       jerseysRead: result.jerseysRead ?? 0,
       fieldRegistered: result.fieldRegistered ?? false,
       fieldError: result.fieldCalibrationError,
+      peakSpeed: result.analytics?.peakSpeedYps,
       durationMs: result.durationMs,
     });
-    return result.tracks;
+    return { tracks: result.tracks, analytics: result.analytics ?? null };
   } catch (err) {
     console.error('tracking_failed', {
       clipBlobUrl,
       error: err instanceof Error ? err.message.slice(0, 200) : String(err),
     });
-    return [];
+    return { tracks: [], analytics: null };
   }
 }
 
@@ -251,6 +253,7 @@ export async function savePlayToDb(
   clipBlobUrl: string,
   analysis: PlayAnalysis | null,
   tracks: PlayerTrack[] = [],
+  analytics: PlayAnalytics | null = null,
 ): Promise<string> {
   'use step';
 
@@ -294,10 +297,12 @@ export async function savePlayToDb(
         aiReasoning: analysis.reasoning,
         aiObservations: analysis.keyObservations.join(' | '),
         tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
+        analytics: analytics ? JSON.stringify(analytics) : undefined,
       } : {
         aiConfidence: String(boundary.confidence),
         geminiOnly: 'true',
         tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
+        analytics: analytics ? JSON.stringify(analytics) : undefined,
       },
     }).returning({ id: plays.id }),
   );
@@ -335,7 +340,7 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
     const { blobUrl, durationSeconds, boundary } = clips[i]!;
 
     // Each call is its own durable step (retryable independently)
-    const [analysis, tracks] = await Promise.all([
+    const [analysis, trackingResult] = await Promise.all([
       claudeAnalyzeOnePlay(blobUrl, durationSeconds, boundary.down, boundary.distance),
       trackPlayersForOnePlay(blobUrl, durationSeconds),
     ]);
@@ -347,7 +352,8 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
       boundary,
       blobUrl,
       analysis,
-      tracks,
+      trackingResult.tracks,
+      trackingResult.analytics,
     );
 
     saved++;

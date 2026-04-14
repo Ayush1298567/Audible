@@ -5,6 +5,7 @@ import { generateText, Output, gateway } from 'ai';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import type { Walkthrough, InsightExample } from '@/lib/scouting/insights';
+import { aggregateByPlayType, type PlayAnalytics } from '@/lib/cv/track-analytics';
 
 export const maxDuration = 180;
 
@@ -112,30 +113,67 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: 'No plays analyzed for this opponent yet' }, { status: 400 });
     }
 
-    // Serialize plays for Claude
-    const playsForPrompt = allPlays.map((p) => ({
-      id: p.id,
-      down: p.down,
-      distance: p.distance,
-      quarter: p.quarter,
-      formation: p.formation,
-      playType: p.playType,
-      direction: p.playDirection,
-      yards: p.gainLoss,
-      result: p.result,
-      coverage: (p.coachOverride as { aiCoverage?: string })?.aiCoverage,
-      front: (p.coachOverride as { aiDefensiveFront?: string })?.aiDefensiveFront,
-      pressure: (p.coachOverride as { aiPressure?: string })?.aiPressure,
-      route: (p.coachOverride as { aiRouteConcept?: string })?.aiRouteConcept,
-      gap: (p.coachOverride as { aiRunGap?: string })?.aiRunGap,
-      observations: (p.coachOverride as { aiObservations?: string })?.aiObservations,
-    }));
+    // Parse analytics JSON from coachOverride once per play (we reuse this for
+    // both the per-play prompt payload and the aggregate summary).
+    const parsedAnalytics = allPlays.map((p) => {
+      const raw = (p.coachOverride as { analytics?: string | unknown })?.analytics;
+      if (typeof raw === 'string') {
+        try { return JSON.parse(raw) as PlayAnalytics; } catch { return null; }
+      }
+      return raw ? (raw as PlayAnalytics) : null;
+    });
+
+    // Serialize plays for Claude — include per-play peak speed, depth, duration
+    // when field-space tracking is available so Claude's tendencies can cite
+    // real numbers instead of vibes.
+    const playsForPrompt = allPlays.map((p, idx) => {
+      const a = parsedAnalytics[idx];
+      const deepest = a?.tracks.find((t) => t.trackId === a.deepestTrackId);
+      return {
+        id: p.id,
+        down: p.down,
+        distance: p.distance,
+        quarter: p.quarter,
+        formation: p.formation,
+        playType: p.playType,
+        direction: p.playDirection,
+        yards: p.gainLoss,
+        result: p.result,
+        coverage: (p.coachOverride as { aiCoverage?: string })?.aiCoverage,
+        front: (p.coachOverride as { aiDefensiveFront?: string })?.aiDefensiveFront,
+        pressure: (p.coachOverride as { aiPressure?: string })?.aiPressure,
+        route: (p.coachOverride as { aiRouteConcept?: string })?.aiRouteConcept,
+        gap: (p.coachOverride as { aiRunGap?: string })?.aiRunGap,
+        observations: (p.coachOverride as { aiObservations?: string })?.aiObservations,
+        // CV-derived measurements (undefined when tracking wasn't field-registered)
+        peakSpeedYps: a?.peakSpeedYps ? Number(a.peakSpeedYps.toFixed(1)) : undefined,
+        playDurationSec: a?.playDurationSeconds ? Number(a.playDurationSeconds.toFixed(1)) : undefined,
+        maxDepthYards: deepest?.maxDepthYards ? Number(deepest.maxDepthYards.toFixed(1)) : undefined,
+      };
+    });
+
+    // Aggregate CV analytics across plays for the "here's the data the coach
+    // should know" header Claude sees before the raw play list.
+    const aggregated = aggregateByPlayType(
+      allPlays.map((p, idx) => ({
+        playType: p.playType,
+        analytics: parsedAnalytics[idx] ?? null,
+      })),
+    );
+
+    const analyticsHeader = aggregated.fieldRegisteredPlays > 0
+      ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
+  Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
+  Avg play duration: ${aggregated.avgPlayDurationSeconds.toFixed(1)} s
+  Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
+  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}\n`
+      : '';
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
       model: gateway('anthropic/claude-sonnet-4.6'),
       system: SYSTEM_PROMPT,
-      prompt: `Opponent: ${opp.name}\nTotal plays analyzed: ${allPlays.length}\n\nPlay data (JSON):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. For each, pick 2-3 evidence play IDs and provide visual overlays.`,
+      prompt: `Opponent: ${opp.name}\nTotal plays analyzed: ${allPlays.length}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
       output: Output.object({ schema: responseSchema }),
     });
 

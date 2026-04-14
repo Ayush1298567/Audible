@@ -15,6 +15,7 @@ import { detectPeopleInFrames } from './player-detector';
 import { trackDetections, type PlayerTrack } from './player-tracker';
 import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
 import { calibrateFieldFromClip, applyHomography } from './field-homography';
+import { computePlayAnalytics, type PlayAnalytics } from './track-analytics';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,6 +55,8 @@ export interface TrackClipResult {
   fieldCalibrationError?: number;
   /** Whether the clip is in field-space (true) or pixel-space only (false). */
   fieldRegistered?: boolean;
+  /** Per-play analytics computed from the tracks. */
+  analytics?: PlayAnalytics;
 }
 
 /**
@@ -165,6 +168,9 @@ export async function trackPlayersInClip(
     }
   }
 
+  // Step 8: compute per-play analytics in field space (or pixel if calibration failed)
+  const analytics = computePlayAnalytics(tracks);
+
   // Cleanup
   await unlink(clipPath).catch(() => {});
 
@@ -177,5 +183,6 @@ export async function trackPlayersInClip(
     jerseysRead,
     fieldCalibrationError,
     fieldRegistered,
+    analytics,
   };
 }
