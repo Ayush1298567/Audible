@@ -55,6 +55,13 @@ const curatedInsightSchema = z.object({
       ),
     )
     .describe('Per-play overlays, keyed by play ID'),
+  highlight_tracks_per_play: z
+    .record(z.string(), z.array(z.string()).max(4))
+    .optional()
+    .describe(
+      'Per-play track IDs Claude wants visually highlighted as the coach watches ' +
+        '— usually the WR/CB/S pair from the key matchup. Max 4 per play.',
+    ),
 });
 
 const responseSchema = z.object({
@@ -79,6 +86,14 @@ Rules:
    - Arrow showing motion or route direction
    - Label callout like "Safety widens" at t=1.2s
    - Zone rectangle over an open area
+6. USE THE MATCHUP DATA. When a play includes a "matchups" field, that's the
+   CV-derived answer to "who got open and against whom." When you cite a
+   tendency, prefer citing the exact matchup — "their CB #24 gave up 3.2 yds
+   of separation on slants" beats "they give up separation on slants".
+7. For each evidence play, populate highlight_tracks_per_play with the
+   track IDs the coach should watch — typically the offense/defense pair
+   from the key matchup (trackIds in the matchups array). This is what
+   visually lights up on the clip as the coach watches.
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -182,6 +197,19 @@ export async function POST(req: Request): Promise<Response> {
           deepest?.maxDepthYards !== undefined
             ? Number(deepest.maxDepthYards.toFixed(1))
             : undefined,
+        // Matchups: the football-meaningful pairings — WR/TE/RB vs their
+        // nearest defender — with separation + closing speed. This is
+        // where tendencies actually live.
+        matchups: isFieldSpace && a?.keyMatchups?.length
+          ? a.keyMatchups.map((m) => ({
+              trackIds: [m.offense.trackId, m.defense.trackId],
+              off: `${m.offense.role}${m.offense.jersey ? ` #${m.offense.jersey}` : ''}`,
+              def: `${m.defense.role}${m.defense.jersey ? ` #${m.defense.jersey}` : ''}`,
+              sepYds: m.minSeparationYards,
+              closingYps: m.closingYps,
+              offMaxYps: m.offenseMaxSpeedYps,
+            }))
+          : undefined,
       };
     });
 
@@ -305,6 +333,7 @@ export async function POST(req: Request): Promise<Response> {
                 `${p.playType ?? 'Play'} ${p.playDirection ?? ''} — ${p.result ?? `${p.gainLoss ?? 0} yd`}`.trim(),
               overlays: ins.overlays_per_play[pid] ?? [],
               tracks,
+              highlightTrackIds: ins.highlight_tracks_per_play?.[pid],
               measurements,
             };
           })

@@ -55,6 +55,26 @@ export interface PairwiseSeparation {
   closingYps: number;
 }
 
+/**
+ * A skill player vs nearest defender — the matchup that actually decides
+ * most snaps. Feeds the coaching narrative ("their #2 CB gives up 3 yds
+ * of separation on slants").
+ */
+export interface KeyMatchup {
+  /** Offensive skill player — WR/TE/RB (role-labeled track). */
+  offense: { trackId: string; role: string; jersey?: string };
+  /** Closest defender to them during the play — CB/S/LB. */
+  defense: { trackId: string; role: string; jersey?: string };
+  /** Minimum separation in yards. */
+  minSeparationYards: number;
+  /** Timestamp (seconds from clip start) at which min separation occurred. */
+  atT: number;
+  /** Closing speed (yards/second) into that minimum. */
+  closingYps: number;
+  /** Max speed the offense player hit during the play. */
+  offenseMaxSpeedYps: number;
+}
+
 export interface PlayAnalytics {
   /** Per-track analytics. */
   tracks: TrackAnalytics[];
@@ -66,6 +86,11 @@ export interface PlayAnalytics {
   playDurationSeconds: number;
   /** Whether field-space analytics are available (i.e., M3 calibration succeeded). */
   fieldSpace: boolean;
+  /**
+   * Up to 3 notable offense-vs-defense matchups ranked by importance
+   * (depth + separation). Only computed when field-space + role-labeled.
+   */
+  keyMatchups?: KeyMatchup[];
 }
 
 // ─── Per-track math ─────────────────────────────────────────
@@ -277,13 +302,69 @@ export function computePlayAnalytics(tracks: PlayerTrack[]): PlayAnalytics {
   }
   const playDuration = Number.isFinite(minStart) && Number.isFinite(maxEnd) ? maxEnd - minStart : 0;
 
+  // Compute key matchups only when we have role labels + field space.
+  // Rank by importance: depth × separation (deeper routes with less separation
+  // = bigger tendency signal).
+  const keyMatchups = fieldSpace ? computeKeyMatchups(tracks, trackStats) : undefined;
+
   return {
     tracks: trackStats,
     peakSpeedYps: peak,
     deepestTrackId: deepest?.id,
     playDurationSeconds: playDuration,
     fieldSpace,
+    keyMatchups,
   };
+}
+
+const OFFENSE_SKILL_ROLES = new Set(['WR', 'TE', 'RB', 'QB']);
+const DEFENSE_ROLES = new Set(['CB', 'S', 'LB', 'DL']);
+
+function computeKeyMatchups(
+  tracks: PlayerTrack[],
+  trackStats: TrackAnalytics[],
+): KeyMatchup[] | undefined {
+  const offense = tracks.filter((t) => t.role && OFFENSE_SKILL_ROLES.has(t.role));
+  const defense = tracks.filter((t) => t.role && DEFENSE_ROLES.has(t.role));
+
+  if (offense.length === 0 || defense.length === 0) return undefined;
+
+  const matchups: KeyMatchup[] = [];
+  const statMap = new Map(trackStats.map((s) => [s.trackId, s]));
+
+  for (const off of offense) {
+    // Find the defender who got closest to this offensive player.
+    let best: { d: PlayerTrack; sep: ReturnType<typeof minSeparation> } | null = null;
+    for (const def of defense) {
+      const sep = minSeparation(off, def, true);
+      if (!sep) continue;
+      if (!best || sep.minYards < best.sep!.minYards) {
+        best = { d: def, sep };
+      }
+    }
+    if (!best?.sep) continue;
+
+    matchups.push({
+      offense: { trackId: off.trackId, role: off.role ?? 'UNKNOWN', jersey: off.jersey },
+      defense: { trackId: best.d.trackId, role: best.d.role ?? 'UNKNOWN', jersey: best.d.jersey },
+      minSeparationYards: Number(best.sep.minYards.toFixed(1)),
+      atT: Number(best.sep.atT.toFixed(2)),
+      closingYps: Number(best.sep.closingYps.toFixed(1)),
+      offenseMaxSpeedYps: Number((statMap.get(off.trackId)?.maxSpeedYps ?? 0).toFixed(1)),
+    });
+  }
+
+  // Rank by "importance": deeper routes with less separation are bigger signals.
+  // Score = offenseMaxDepthYards / (1 + minSeparationYards). Higher = more notable.
+  matchups.sort((a, b) => {
+    const depthA = statMap.get(a.offense.trackId)?.maxDepthYards ?? 0;
+    const depthB = statMap.get(b.offense.trackId)?.maxDepthYards ?? 0;
+    const scoreA = depthA / (1 + a.minSeparationYards);
+    const scoreB = depthB / (1 + b.minSeparationYards);
+    return scoreB - scoreA;
+  });
+
+  return matchups.slice(0, 3);
 }
 
 // ─── Aggregation across plays (for walkthrough prompt) ──────

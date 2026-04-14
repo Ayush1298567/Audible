@@ -256,7 +256,13 @@ function InsightStep({
             )}
           </div>
 
-          <OverlayVideo src={example.clipUrl} overlays={example.overlays} autoPlay />
+          <OverlayVideo
+            src={example.clipUrl}
+            overlays={example.overlays}
+            tracks={example.tracks}
+            highlightTrackIds={example.highlightTrackIds}
+            autoPlay
+          />
 
           {example.measurements && <MeasurementBadges m={example.measurements} />}
 

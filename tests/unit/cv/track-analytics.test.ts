@@ -189,6 +189,94 @@ describe('minSeparation', () => {
   });
 });
 
+describe('computePlayAnalytics keyMatchups', () => {
+  // Helper that accepts a role so we can exercise the matchup path.
+  const roleTrack = (
+    id: string,
+    role: string,
+    points: Array<[number, number, number]>,
+    jersey?: string,
+  ): PlayerTrack => ({
+    trackId: id,
+    role,
+    jersey,
+    points: points.map(([t, fx, fy]): TrackPoint => ({
+      t,
+      x: 0.5, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9,
+      fx, fy,
+    })),
+  });
+
+  it('produces no matchups without role labels', () => {
+    // Two field-space tracks, no roles → no matchups
+    const a = fieldTrack('a', [[0, 30, 20], [2, 50, 20]]);
+    const b = fieldTrack('b', [[0, 30, 22], [2, 50, 22]]);
+    const result = computePlayAnalytics([a, b]);
+    expect(result.fieldSpace).toBe(true);
+    expect(result.keyMatchups).toBeUndefined();
+  });
+
+  it('produces no matchups without field space', () => {
+    // Pixel-only tracks with roles
+    const pixOnly = (id: string, role: string): PlayerTrack => ({
+      trackId: id,
+      role,
+      points: [
+        { t: 0, x: 0.3, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9 },
+        { t: 1, x: 0.5, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9 },
+      ],
+    });
+    const result = computePlayAnalytics([pixOnly('a', 'WR'), pixOnly('b', 'CB')]);
+    expect(result.fieldSpace).toBe(false);
+    expect(result.keyMatchups).toBeUndefined();
+  });
+
+  it('pairs each offense player with their closest defender', () => {
+    // WR runs down the left sideline; CB trails tight.
+    // S stays deep center — shouldn't be the closest.
+    const wr = roleTrack('wr', 'WR', [[0, 30, 5], [1, 40, 5], [2, 50, 5]], '11');
+    const cb = roleTrack('cb', 'CB', [[0, 32, 7], [1, 42, 7], [2, 52, 7]], '24');
+    const s = roleTrack('s', 'S', [[0, 40, 26], [1, 42, 26], [2, 44, 26]], '9');
+
+    const result = computePlayAnalytics([wr, cb, s]);
+    expect(result.keyMatchups).toBeDefined();
+    expect(result.keyMatchups?.length).toBeGreaterThan(0);
+    const wrMatchup = result.keyMatchups?.find((m) => m.offense.trackId === 'wr');
+    expect(wrMatchup).toBeDefined();
+    expect(wrMatchup?.defense.trackId).toBe('cb'); // CB was closer than S
+    expect(wrMatchup?.defense.jersey).toBe('24');
+    expect(wrMatchup?.minSeparationYards).toBeCloseTo(2.83, 1); // sqrt(2^2 + 2^2) ≈ 2.83
+  });
+
+  it('ranks matchups so the deepest route comes first', () => {
+    // Two offensive players, same separation — deeper route should rank first.
+    const deepWR = roleTrack('deep', 'WR', [[0, 30, 5], [2, 70, 5]]);
+    const deepCB = roleTrack('cb1', 'CB', [[0, 32, 7], [2, 72, 7]]);
+    const shortRB = roleTrack('rb', 'RB', [[0, 30, 26], [2, 34, 26]]);
+    const shortLB = roleTrack('lb', 'LB', [[0, 34, 30], [2, 38, 30]]);
+
+    const result = computePlayAnalytics([deepWR, deepCB, shortRB, shortLB]);
+    expect(result.keyMatchups).toBeDefined();
+    expect(result.keyMatchups?.[0]?.offense.trackId).toBe('deep');
+  });
+
+  it('caps output at 3 matchups', () => {
+    // 5 offensive players, 1 defender — will produce 5 matchups but only 3 should survive.
+    const makeWR = (i: number, depth: number): PlayerTrack =>
+      roleTrack(`wr${i}`, 'WR', [[0, 30, 5 + i * 8], [2, 30 + depth, 5 + i * 8]]);
+    const tracks = [
+      makeWR(0, 30),
+      makeWR(1, 25),
+      makeWR(2, 20),
+      makeWR(3, 15),
+      makeWR(4, 10),
+      roleTrack('cb', 'CB', [[0, 32, 6], [2, 60, 6]]),
+    ];
+    const result = computePlayAnalytics(tracks);
+    expect(result.keyMatchups?.length).toBeLessThanOrEqual(3);
+  });
+});
+
 describe('aggregateByPlayType', () => {
   it('buckets plays by type and averages their analytics', () => {
     // passPlay1 WR: 50→58→68 = max step 10 yds/s
