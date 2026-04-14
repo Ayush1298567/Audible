@@ -456,3 +456,105 @@ export function aggregateByPlayType(
     })),
   };
 }
+
+// ─── Opponent-level matchup aggregation ─────────────────────
+
+/**
+ * Defender-level tendency: across N plays this defender appeared in the
+ * matchups, how much separation did they give up on average?
+ *
+ * This is the coaching money shot: "their CB #24 gives up 3.2 yds of
+ * separation on deep routes across 7 snaps — Cover 3 is toast to the
+ * boundary."
+ */
+export interface DefenderTendency {
+  jersey?: string;
+  role: string;
+  /** Number of matchups this defender appeared in. */
+  matchupCount: number;
+  /** Average min separation (yards). Lower = worse for the defender. */
+  avgSeparationYards: number;
+  /** Worst single separation given up (max of mins). */
+  worstSeparationYards: number;
+  /** Average closing speed (yards/second). Low closing = late to the ball. */
+  avgClosingYps: number;
+  /** Average max speed of the offense players they matched against. */
+  avgOffenseSpeedYps: number;
+  /** Track IDs for every play this defender showed up in (for evidence clips). */
+  trackIds: string[];
+}
+
+/**
+ * Across every matchup extracted from the opponent's plays, roll up by
+ * defender identity (jersey + role is the key, since trackId is per-clip).
+ * Defenders without jerseys fall into a single bucket per role.
+ */
+export function aggregateMatchupsByDefender(
+  plays: Array<{ analytics: PlayAnalytics | null }>,
+): DefenderTendency[] {
+  type Bucket = {
+    jersey?: string;
+    role: string;
+    seps: number[];
+    closings: number[];
+    offSpeeds: number[];
+    trackIds: string[];
+  };
+
+  const buckets = new Map<string, Bucket>();
+
+  for (const p of plays) {
+    if (!p.analytics?.keyMatchups) continue;
+    for (const m of p.analytics.keyMatchups) {
+      // Key defenders by role + jersey so "CB #24" is tracked across plays.
+      // Without a jersey, all defenders of the same role get lumped together —
+      // better than nothing but less useful for attribution.
+      const key = `${m.defense.role}#${m.defense.jersey ?? 'unknown'}`;
+      let b = buckets.get(key);
+      if (!b) {
+        b = {
+          jersey: m.defense.jersey,
+          role: m.defense.role,
+          seps: [],
+          closings: [],
+          offSpeeds: [],
+          trackIds: [],
+        };
+        buckets.set(key, b);
+      }
+      b.seps.push(m.minSeparationYards);
+      b.closings.push(m.closingYps);
+      b.offSpeeds.push(m.offenseMaxSpeedYps);
+      b.trackIds.push(m.defense.trackId);
+    }
+  }
+
+  const avg = (arr: number[]): number =>
+    arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+
+  // Only keep defenders with enough matchups to be a real signal (>= 2).
+  const tendencies: DefenderTendency[] = [];
+  for (const b of buckets.values()) {
+    if (b.seps.length < 2) continue;
+    tendencies.push({
+      jersey: b.jersey,
+      role: b.role,
+      matchupCount: b.seps.length,
+      avgSeparationYards: Number(avg(b.seps).toFixed(1)),
+      worstSeparationYards: Number(Math.max(...b.seps).toFixed(1)),
+      avgClosingYps: Number(avg(b.closings).toFixed(1)),
+      avgOffenseSpeedYps: Number(avg(b.offSpeeds).toFixed(1)),
+      trackIds: b.trackIds,
+    });
+  }
+
+  // Sort by exploitability: higher avg separation + more matchups = bigger tell.
+  // Cap at 8 — more than that is noise for the prompt.
+  tendencies.sort((a, b) => {
+    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount);
+    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount);
+    return scoreB - scoreA;
+  });
+
+  return tendencies.slice(0, 8);
+}

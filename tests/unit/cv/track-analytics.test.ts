@@ -10,7 +10,13 @@
 
 import { describe, expect, it } from 'vitest';
 import type { PlayerTrack, TrackPoint } from '@/lib/cv/player-tracker';
-import { aggregateByPlayType, computePlayAnalytics, minSeparation } from '@/lib/cv/track-analytics';
+import {
+  aggregateByPlayType,
+  aggregateMatchupsByDefender,
+  computePlayAnalytics,
+  minSeparation,
+  type PlayAnalytics,
+} from '@/lib/cv/track-analytics';
 
 // Helper: build a field-space track from a series of (t, fx, fy) tuples.
 function fieldTrack(
@@ -359,5 +365,132 @@ describe('aggregateByPlayType', () => {
     const unknown = agg.byPlayType.find((b) => b.playType === 'Unknown');
     expect(unknown).toBeDefined();
     expect(unknown?.count).toBe(2);
+  });
+});
+
+describe('aggregateMatchupsByDefender', () => {
+  const roleTrack = (
+    id: string,
+    role: string,
+    points: Array<[number, number, number]>,
+    jersey?: string,
+  ): PlayerTrack => ({
+    trackId: id,
+    role,
+    jersey,
+    points: points.map(([t, fx, fy]): TrackPoint => ({
+      t,
+      x: 0.5, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9,
+      fx, fy,
+    })),
+  });
+
+  it('rolls up separations across plays by defender jersey+role', () => {
+    // Three plays where CB #24 covers a WR with 3yd separation every time.
+    const makePlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [1, 40, 5], [2, 50, 5]], '11'),
+      roleTrack(`cb-${suffix}`, 'CB', [[0, 33, 5], [1, 43, 5], [2, 53, 5]], '24'),
+    ]);
+
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: makePlay('a') },
+      { analytics: makePlay('b') },
+      { analytics: makePlay('c') },
+    ]);
+
+    expect(tendencies).toHaveLength(1);
+    expect(tendencies[0]?.jersey).toBe('24');
+    expect(tendencies[0]?.role).toBe('CB');
+    expect(tendencies[0]?.matchupCount).toBe(3);
+    // 3 separation in each play
+    expect(tendencies[0]?.avgSeparationYards).toBeCloseTo(3, 0);
+    // Three distinct trackIds (one per clip)
+    expect(tendencies[0]?.trackIds).toHaveLength(3);
+  });
+
+  it('filters out defenders with only one matchup (noise)', () => {
+    // Only one play → only one matchup per defender → filtered
+    const oneShot = computePlayAnalytics([
+      roleTrack('wr', 'WR', [[0, 30, 5], [2, 50, 5]], '11'),
+      roleTrack('cb', 'CB', [[0, 33, 5], [2, 53, 5]], '24'),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([{ analytics: oneShot }]);
+    expect(tendencies).toEqual([]);
+  });
+
+  it('ranks defenders by exploitability (higher avg sep + more matchups)', () => {
+    // CB #24: 5 matchups, 4yd avg sep — should rank first.
+    // S #7:  2 matchups, 5yd avg sep — fewer samples, lower score.
+    const makeCB24Play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], '11'),
+      roleTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], '24'),
+    ]);
+    const makeS7Play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      roleTrack(`wr2-${suffix}`, 'WR', [[0, 30, 26], [2, 70, 26]], '88'),
+      roleTrack(`s-${suffix}`, 'S', [[0, 35, 26], [2, 75, 26]], '7'),
+    ]);
+
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: makeCB24Play('1') },
+      { analytics: makeCB24Play('2') },
+      { analytics: makeCB24Play('3') },
+      { analytics: makeCB24Play('4') },
+      { analytics: makeCB24Play('5') },
+      { analytics: makeS7Play('1') },
+      { analytics: makeS7Play('2') },
+    ]);
+
+    expect(tendencies.length).toBeGreaterThanOrEqual(2);
+    expect(tendencies[0]?.jersey).toBe('24');
+    expect(tendencies[0]?.matchupCount).toBe(5);
+  });
+
+  it('ignores plays with no matchups', () => {
+    const noMatchups = computePlayAnalytics([
+      // No roles → no matchups
+      fieldTrack('x', [[0, 30, 20], [2, 50, 20]]),
+      fieldTrack('y', [[0, 30, 22], [2, 50, 22]]),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: noMatchups },
+      { analytics: null },
+    ]);
+    expect(tendencies).toEqual([]);
+  });
+
+  it('buckets jersey-less defenders separately from jersey-known ones', () => {
+    // Two plays: one with CB jersey #24, one with CB jersey unknown.
+    // They should NOT merge — the coach needs to know the #24 data is clean.
+    const known = computePlayAnalytics([
+      roleTrack('wr1', 'WR', [[0, 30, 5], [2, 50, 5]], '11'),
+      roleTrack('cb1', 'CB', [[0, 33, 5], [2, 53, 5]], '24'),
+    ]);
+    const known2 = computePlayAnalytics([
+      roleTrack('wr1b', 'WR', [[0, 30, 5], [2, 50, 5]], '11'),
+      roleTrack('cb1b', 'CB', [[0, 34, 5], [2, 54, 5]], '24'),
+    ]);
+    const unknown = computePlayAnalytics([
+      roleTrack('wr2', 'WR', [[0, 30, 5], [2, 50, 5]], '88'),
+      // no jersey
+      roleTrack('cb2', 'CB', [[0, 33, 5], [2, 53, 5]]),
+    ]);
+    const unknown2 = computePlayAnalytics([
+      roleTrack('wr2b', 'WR', [[0, 30, 5], [2, 50, 5]], '88'),
+      roleTrack('cb2b', 'CB', [[0, 33, 5], [2, 53, 5]]),
+    ]);
+
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: known },
+      { analytics: known2 },
+      { analytics: unknown },
+      { analytics: unknown2 },
+    ]);
+
+    const jersey24 = tendencies.find((t) => t.jersey === '24');
+    const noJersey = tendencies.find((t) => t.jersey === undefined);
+    expect(jersey24).toBeDefined();
+    expect(noJersey).toBeDefined();
+    expect(jersey24?.matchupCount).toBe(2);
+    expect(noJersey?.matchupCount).toBe(2);
   });
 });

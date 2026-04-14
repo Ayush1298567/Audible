@@ -1,7 +1,11 @@
 import { gateway, generateText, Output } from 'ai';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { aggregateByPlayType, type PlayAnalytics } from '@/lib/cv/track-analytics';
+import {
+  aggregateByPlayType,
+  aggregateMatchupsByDefender,
+  type PlayAnalytics,
+} from '@/lib/cv/track-analytics';
 import { withProgramContext } from '@/lib/db/client';
 import { games, opponents, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
@@ -90,7 +94,12 @@ Rules:
    CV-derived answer to "who got open and against whom." When you cite a
    tendency, prefer citing the exact matchup — "their CB #24 gave up 3.2 yds
    of separation on slants" beats "they give up separation on slants".
-7. For each evidence play, populate highlight_tracks_per_play with the
+7. USE THE DEFENDER-TENDENCIES HEADER. The header lists each defender by
+   jersey and role with their matchup count and average separation across
+   the whole opponent film. A DB appearing in 5+ matchups with >3 yds avg
+   separation is a dominant tendency — at least one of your insights should
+   target them by name.
+8. For each evidence play, populate highlight_tracks_per_play with the
    track IDs the coach should watch — typically the offense/defense pair
    from the key matchup (trackIds in the matchups array). This is what
    visually lights up on the clip as the coach watches.
@@ -222,13 +231,27 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Roll up every matchup by the defender's jersey+role so we can point
+    // Claude at specific exploitable defenders instead of just "the corner".
+    const defenderTendencies = aggregateMatchupsByDefender(
+      allPlays.map((_, idx) => ({ analytics: parsedAnalytics[idx] ?? null })),
+    );
+
+    const defenderHeader = defenderTendencies.length > 0
+      ? `\nDefender tendencies (most-exploited first, from matchup data):
+${defenderTendencies.map((d) => {
+  const name = d.jersey ? `${d.role} #${d.jersey}` : `${d.role} (jersey unreadable)`;
+  return `  ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
+}).join('\n')}\n`
+      : '';
+
     const analyticsHeader =
       aggregated.fieldRegisteredPlays > 0
         ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
   Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
   Avg play duration: ${aggregated.avgPlayDurationSeconds.toFixed(1)} s
   Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
-  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}\n`
+  By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}`
         : '';
 
     // Ask Claude to curate the walkthrough
