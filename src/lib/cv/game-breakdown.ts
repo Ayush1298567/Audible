@@ -219,10 +219,14 @@ export async function claudeAnalyzeOnePlay(
 export async function trackPlayersForOnePlay(
   clipBlobUrl: string,
   durationSeconds: number,
+  playContext?: { playType?: string; formation?: string; coverage?: string },
 ): Promise<{ tracks: PlayerTrack[]; analytics: PlayAnalytics | null }> {
   'use step';
   try {
-    const result = await trackPlayersInClip(clipBlobUrl, durationSeconds, { fps: 2 });
+    const result = await trackPlayersInClip(clipBlobUrl, durationSeconds, {
+      fps: 2,
+      playContext,
+    });
     console.log('tracking_done', {
       clipBlobUrl,
       tracks: result.tracks.length,
@@ -231,6 +235,7 @@ export async function trackPlayersForOnePlay(
       fieldRegistered: result.fieldRegistered ?? false,
       fieldError: result.fieldCalibrationError,
       peakSpeed: result.analytics?.peakSpeedYps,
+      rolesAssigned: result.rolesAssigned ?? 0,
       durationMs: result.durationMs,
     });
     return { tracks: result.tracks, analytics: result.analytics ?? null };
@@ -339,11 +344,25 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
   for (let i = 0; i < clips.length; i++) {
     const { blobUrl, durationSeconds, boundary } = clips[i]!;
 
-    // Each call is its own durable step (retryable independently)
-    const [analysis, trackingResult] = await Promise.all([
-      claudeAnalyzeOnePlay(blobUrl, durationSeconds, boundary.down, boundary.distance),
-      trackPlayersForOnePlay(blobUrl, durationSeconds),
-    ]);
+    // Claude analysis first so its output (formation, playType, coverage)
+    // feeds role inference downstream. Each call is its own durable step
+    // (retryable independently).
+    const analysis = await claudeAnalyzeOnePlay(
+      blobUrl,
+      durationSeconds,
+      boundary.down,
+      boundary.distance,
+    );
+
+    const trackingResult = await trackPlayersForOnePlay(
+      blobUrl,
+      durationSeconds,
+      {
+        playType: analysis?.playType ?? boundary.playType ?? undefined,
+        formation: analysis?.formation ?? boundary.formation ?? undefined,
+        coverage: analysis?.coverageShell ?? undefined,
+      },
+    );
 
     await savePlayToDb(
       job.programId,

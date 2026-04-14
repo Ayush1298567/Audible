@@ -213,6 +213,39 @@ export async function POST(req: Request): Promise<Response> {
             } else if (Array.isArray(rawTracks)) {
               tracks = rawTracks as InsightExample['tracks'];
             }
+            // Extract analytics JSON — for visible measurement badges in the UI.
+            let playAnalytics: PlayAnalytics | null = null;
+            const rawAnalytics = (p.coachOverride as { analytics?: string | unknown })?.analytics;
+            if (typeof rawAnalytics === 'string') {
+              try { playAnalytics = JSON.parse(rawAnalytics) as PlayAnalytics; } catch { /* ignore */ }
+            } else if (rawAnalytics) {
+              playAnalytics = rawAnalytics as PlayAnalytics;
+            }
+            let measurements: InsightExample['measurements'] = undefined;
+            if (playAnalytics) {
+              // Find the track that hit peakSpeedYps (for jersey/role attribution)
+              const peakTrack = playAnalytics.tracks.find(
+                (t) => Math.abs(t.maxSpeedYps - playAnalytics!.peakSpeedYps) < 0.01,
+              );
+              const deepest = playAnalytics.tracks.find(
+                (t) => t.trackId === playAnalytics!.deepestTrackId,
+              );
+              measurements = {
+                peakSpeedYps: playAnalytics.peakSpeedYps > 0
+                  ? Number(playAnalytics.peakSpeedYps.toFixed(1))
+                  : undefined,
+                peakSpeedPlayer: peakTrack
+                  ? { jersey: peakTrack.jersey, role: peakTrack.role }
+                  : undefined,
+                maxDepthYards: deepest?.maxDepthYards !== undefined
+                  ? Number(deepest.maxDepthYards.toFixed(1))
+                  : undefined,
+                playDurationSec: playAnalytics.playDurationSeconds > 0
+                  ? Number(playAnalytics.playDurationSeconds.toFixed(1))
+                  : undefined,
+                fieldRegistered: playAnalytics.fieldSpace,
+              };
+            }
             return {
               playId: pid,
               label: `${p.down ?? '?'}&${p.distance ?? '?'} · Q${p.quarter ?? '?'} · ${p.formation ?? ''}`.trim(),
@@ -220,6 +253,7 @@ export async function POST(req: Request): Promise<Response> {
               description: `${p.playType ?? 'Play'} ${p.playDirection ?? ''} — ${p.result ?? `${p.gainLoss ?? 0} yd`}`.trim(),
               overlays: ins.overlays_per_play[pid] ?? [],
               tracks,
+              measurements,
             };
           })
           .filter((x): x is NonNullable<typeof x> => x !== null),

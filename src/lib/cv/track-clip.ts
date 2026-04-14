@@ -16,6 +16,7 @@ import { trackDetections, type PlayerTrack } from './player-tracker';
 import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
 import { calibrateFieldFromClip, applyHomography } from './field-homography';
 import { computePlayAnalytics, type PlayAnalytics } from './track-analytics';
+import { inferTrackRoles, applyRolesToTracks } from './role-inference';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +41,14 @@ export interface TrackClipOptions {
   readJerseys?: boolean;
   /** Run field homography + project tracks into yard coords. Default true. */
   registerField?: boolean;
+  /** Infer football roles for each track. Default true (requires field registration). */
+  inferRoles?: boolean;
+  /** Context passed to role inference to help Claude break ties. */
+  playContext?: {
+    playType?: string;
+    formation?: string;
+    coverage?: string;
+  };
 }
 
 export interface TrackClipResult {
@@ -57,6 +66,8 @@ export interface TrackClipResult {
   fieldRegistered?: boolean;
   /** Per-play analytics computed from the tracks. */
   analytics?: PlayAnalytics;
+  /** How many tracks received a role label (QB/RB/WR/LB/CB/etc). */
+  rolesAssigned?: number;
 }
 
 /**
@@ -168,7 +179,36 @@ export async function trackPlayersInClip(
     }
   }
 
-  // Step 8: compute per-play analytics in field space (or pixel if calibration failed)
+  // Step 8: infer roles (QB/RB/WR/LB/CB/S/…) per track, if field-registered
+  let rolesAssigned = 0;
+  if (opts.inferRoles !== false && fieldRegistered && tracks.length > 0) {
+    try {
+      // LOS heuristic: median fx of all first-point positions — OL/DL cluster there
+      const startXs = tracks
+        .map((t) => t.points[0]?.fx)
+        .filter((v): v is number => v !== undefined)
+        .sort((a, b) => a - b);
+      const los = startXs.length > 0
+        ? startXs[Math.floor(startXs.length / 2)]
+        : undefined;
+
+      const roleResult = await inferTrackRoles({
+        tracks,
+        los,
+        playType: opts.playContext?.playType,
+        formation: opts.playContext?.formation,
+        coverage: opts.playContext?.coverage,
+      });
+      tracks = applyRolesToTracks(tracks, roleResult.roles);
+      rolesAssigned = roleResult.assigned;
+    } catch (err) {
+      console.warn('role_inference_failed', {
+        err: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      });
+    }
+  }
+
+  // Step 9: compute per-play analytics in field space (or pixel if calibration failed)
   const analytics = computePlayAnalytics(tracks);
 
   // Cleanup
@@ -184,5 +224,6 @@ export async function trackPlayersInClip(
     fieldCalibrationError,
     fieldRegistered,
     analytics,
+    rolesAssigned,
   };
 }

@@ -249,6 +249,8 @@ function InsightStep({
 
           <OverlayVideo src={example.clipUrl} overlays={example.overlays} autoPlay />
 
+          {example.measurements && <MeasurementBadges m={example.measurements} />}
+
           <p className="text-sm text-slate-400 leading-relaxed italic">
             {example.description}
           </p>
@@ -298,6 +300,62 @@ function InsightStep({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Measurement badges ─────────────────────────────────────
+
+function MeasurementBadges({ m }: { m: NonNullable<Walkthrough['insights'][number]['examples'][number]['measurements']> }) {
+  const badges: Array<{ label: string; value: string; hint?: string }> = [];
+
+  if (m.peakSpeedYps !== undefined && m.peakSpeedYps > 0) {
+    const who = m.peakSpeedPlayer
+      ? [m.peakSpeedPlayer.role, m.peakSpeedPlayer.jersey ? `#${m.peakSpeedPlayer.jersey}` : null]
+          .filter(Boolean).join(' ')
+      : null;
+    badges.push({
+      label: 'Peak speed',
+      value: `${m.peakSpeedYps} yds/s`,
+      hint: who || undefined,
+    });
+  }
+
+  if (m.maxDepthYards !== undefined) {
+    badges.push({
+      label: 'Deepest route',
+      value: `${m.maxDepthYards} yds`,
+    });
+  }
+
+  if (m.playDurationSec !== undefined && m.playDurationSec > 0) {
+    badges.push({
+      label: 'Play time',
+      value: `${m.playDurationSec}s`,
+    });
+  }
+
+  if (badges.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {badges.map((b) => (
+        <div
+          key={b.label}
+          className="flex items-baseline gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.06] px-3 py-1.5"
+        >
+          <span className="font-display text-[9px] uppercase tracking-widest text-cyan-400">
+            {b.label}
+          </span>
+          <span className="text-sm font-semibold text-white tabular-nums">{b.value}</span>
+          {b.hint && <span className="text-[10px] text-slate-400">({b.hint})</span>}
+        </div>
+      ))}
+      {!m.fieldRegistered && (
+        <span className="font-display text-[9px] uppercase tracking-widest text-amber-400/70">
+          Approx · not field-calibrated
+        </span>
+      )}
     </div>
   );
 }

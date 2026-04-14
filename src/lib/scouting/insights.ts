@@ -46,12 +46,20 @@ export interface InsightExample {
   /** Optional player tracks rendered as moving dots on the clip. */
   tracks?: Array<{
     trackId: string;
-    points: Array<{ t: number; x: number; y: number; w: number; h: number; confidence: number }>;
+    points: Array<{ t: number; x: number; y: number; w: number; h: number; confidence: number; fx?: number; fy?: number }>;
     jersey?: string;
     role?: string;
   }>;
   /** Track IDs Claude wants highlighted for this insight. */
   highlightTrackIds?: string[];
+  /** CV-derived measurements for this play, for visible badges in the UI. */
+  measurements?: {
+    peakSpeedYps?: number;
+    peakSpeedPlayer?: { jersey?: string; role?: string };
+    maxDepthYards?: number;
+    playDurationSec?: number;
+    fieldRegistered?: boolean;
+  };
 }
 
 // ─── A single actionable tendency ────────────────────────────
