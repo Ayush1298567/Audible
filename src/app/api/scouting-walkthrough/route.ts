@@ -13,6 +13,7 @@ import {
   extractExplosivePlays,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
+import { reconcileMatchupJerseyRoles } from '@/lib/cv/track-consistency';
 import { withProgramContext } from '@/lib/db/client';
 import { games, opponents, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
@@ -463,12 +464,25 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Cross-play jersey↔role consistency pass. If a jersey shows up with
+    // conflicting roles across plays (e.g. #88 as WR in 5 plays and CB
+    // in 1), the minority instance is almost certainly an OCR or role-
+    // inference mistake. Zero those matchups' confidence so the
+    // aggregator drops them instead of letting them pollute a "CB #88"
+    // bucket that's really a single fluke.
+    const reconciled = reconcileMatchupJerseyRoles(parsedAnalytics);
+    if (reconciled.inconsistencies.length > 0) {
+      console.log('walkthrough_jersey_role_reconciled', {
+        inconsistencies: reconciled.inconsistencies,
+      });
+    }
+
     // Roll up every matchup by the defender's jersey+role so we can point
     // Claude at specific exploitable defenders instead of just "the corner".
     // gameId flows into the aggregators so tendencies get demoted when
     // they only show up in one of several games.
     const matchupAnalyticsInput = allPlays.map((p, idx) => ({
-      analytics: parsedAnalytics[idx] ?? null,
+      analytics: reconciled.analytics[idx] ?? null,
       gameId: p.gameId,
     }));
     const defenderTendencies = aggregateMatchupsByDefender(matchupAnalyticsInput);
