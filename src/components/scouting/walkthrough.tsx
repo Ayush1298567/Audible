@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { OverlayVideo } from './overlay-video';
 import { Button } from '@/components/ui/button';
 import type { Walkthrough } from '@/lib/scouting/insights';
+import { OverlayVideo } from './overlay-video';
 
 /**
  * Interactive scouting walkthrough — option-2 UX (step-by-step).
@@ -96,9 +96,7 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
             <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400">
               Scouting Walkthrough
             </p>
-            <p className="font-display text-sm font-bold text-white">
-              {walkthrough.opponentName}
-            </p>
+            <p className="font-display text-sm font-bold text-white">{walkthrough.opponentName}</p>
           </div>
 
           {/* Progress dots */}
@@ -106,13 +104,16 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
             {insights.map((_, i) => {
               const isActive = view.step === 'insight' && view.insightIdx === i;
               const isDone =
-                view.step === 'summary' ||
-                (view.step === 'insight' && view.insightIdx > i);
+                view.step === 'summary' || (view.step === 'insight' && view.insightIdx > i);
               return (
                 <div
                   key={i}
                   className={`h-1.5 rounded-full transition-all ${
-                    isActive ? 'w-8 bg-cyan-400' : isDone ? 'w-3 bg-cyan-400/50' : 'w-3 bg-slate-700'
+                    isActive
+                      ? 'w-8 bg-cyan-400'
+                      : isDone
+                        ? 'w-3 bg-cyan-400/50'
+                        : 'w-3 bg-slate-700'
                   }`}
                 />
               );
@@ -125,7 +126,15 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
             className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/50 text-slate-500 hover:text-white hover:border-slate-600 transition-colors"
             aria-label="Close"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -146,7 +155,9 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
               onSkip={skipInsight}
             />
           )}
-          {view.step === 'summary' && <SummaryStep walkthrough={walkthrough} onClose={onClose} onPrev={prev} />}
+          {view.step === 'summary' && (
+            <SummaryStep walkthrough={walkthrough} onClose={onClose} onPrev={prev} />
+          )}
         </div>
       </div>
     </div>
@@ -166,8 +177,8 @@ function IntroStep({ walkthrough, onNext }: { walkthrough: Walkthrough; onNext: 
           {walkthrough.insights.length} things they&apos;ll do to you
         </h1>
         <p className="font-display text-xl text-slate-400 mt-4 max-w-xl">
-          Analyzed {walkthrough.playsAnalyzed} plays from {walkthrough.opponentName}.
-          Here are the most exploitable tendencies, one at a time.
+          Analyzed {walkthrough.playsAnalyzed} plays from {walkthrough.opponentName}. Here are the
+          most exploitable tendencies, one at a time.
         </p>
       </div>
 
@@ -221,9 +232,7 @@ function InsightStep({
         <h2 className="font-display text-3xl font-bold text-white uppercase tracking-wide">
           {insight.headline}
         </h2>
-        <p className="text-slate-300 mt-3 leading-relaxed max-w-3xl">
-          {insight.narrative}
-        </p>
+        <p className="text-slate-300 mt-3 leading-relaxed max-w-3xl">{insight.narrative}</p>
       </div>
 
       {/* Video + overlays */}
@@ -251,9 +260,7 @@ function InsightStep({
 
           {example.measurements && <MeasurementBadges m={example.measurements} />}
 
-          <p className="text-sm text-slate-400 leading-relaxed italic">
-            {example.description}
-          </p>
+          <p className="text-sm text-slate-400 leading-relaxed italic">{example.description}</p>
         </div>
       )}
 
@@ -278,13 +285,21 @@ function InsightStep({
 
       {/* Navigation */}
       <div className="flex items-center justify-between pt-4">
-        <Button variant="ghost" onClick={onPrev} className="font-display text-xs uppercase tracking-widest">
+        <Button
+          variant="ghost"
+          onClick={onPrev}
+          className="font-display text-xs uppercase tracking-widest"
+        >
           ← Back
         </Button>
 
         <div className="flex items-center gap-2">
           {!isLastInsight && (
-            <Button variant="outline" onClick={onSkip} className="font-display text-xs uppercase tracking-widest">
+            <Button
+              variant="outline"
+              onClick={onSkip}
+              className="font-display text-xs uppercase tracking-widest"
+            >
               Skip tendency
             </Button>
           )}
@@ -306,13 +321,18 @@ function InsightStep({
 
 // ─── Measurement badges ─────────────────────────────────────
 
-function MeasurementBadges({ m }: { m: NonNullable<Walkthrough['insights'][number]['examples'][number]['measurements']> }) {
+function MeasurementBadges({
+  m,
+}: {
+  m: NonNullable<Walkthrough['insights'][number]['examples'][number]['measurements']>;
+}) {
   const badges: Array<{ label: string; value: string; hint?: string }> = [];
 
   if (m.peakSpeedYps !== undefined && m.peakSpeedYps > 0) {
     const who = m.peakSpeedPlayer
       ? [m.peakSpeedPlayer.role, m.peakSpeedPlayer.jersey ? `#${m.peakSpeedPlayer.jersey}` : null]
-          .filter(Boolean).join(' ')
+          .filter(Boolean)
+          .join(' ')
       : null;
     badges.push({
       label: 'Peak speed',
@@ -377,9 +397,7 @@ function SummaryStep({
         <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
           Game Plan Summary
         </p>
-        <h1 className="font-display text-3xl font-bold text-white">
-          What to do this week
-        </h1>
+        <h1 className="font-display text-3xl font-bold text-white">What to do this week</h1>
         <p className="text-slate-400 mt-2">
           Bring these tendencies to practice. Call the recommended plays on Friday.
         </p>
@@ -387,7 +405,10 @@ function SummaryStep({
 
       <div className="space-y-4">
         {walkthrough.insights.map((i) => (
-          <div key={i.id} className="glass-card rounded-xl p-5 space-y-3 border-l-2 border-l-cyan-500/50">
+          <div
+            key={i.id}
+            className="glass-card rounded-xl p-5 space-y-3 border-l-2 border-l-cyan-500/50"
+          >
             <div className="flex items-start justify-between">
               <div>
                 <p className="font-display text-[10px] uppercase tracking-widest text-slate-500">
@@ -397,9 +418,7 @@ function SummaryStep({
                   {i.headline}
                 </h3>
               </div>
-              <span className="tag-chip tag-info text-[10px]">
-                {i.evidenceCount} plays
-              </span>
+              <span className="tag-chip tag-info text-[10px]">{i.evidenceCount} plays</span>
             </div>
 
             <p className="text-sm text-slate-300 leading-relaxed">{i.narrative}</p>
@@ -422,7 +441,11 @@ function SummaryStep({
       </div>
 
       <div className="flex items-center justify-between pt-4">
-        <Button variant="ghost" onClick={onPrev} className="font-display text-xs uppercase tracking-widest">
+        <Button
+          variant="ghost"
+          onClick={onPrev}
+          className="font-display text-xs uppercase tracking-widest"
+        >
           ← Back
         </Button>
         <Button

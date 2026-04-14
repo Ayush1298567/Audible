@@ -1,3 +1,6 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: numeric matrix code with
+   bounds-checked indexing — non-null assertions are correct here, and rewriting
+   with `?? 0` would silently mask bugs in the linear algebra. */
 /**
  * Field registration + homography.
  *
@@ -28,12 +31,12 @@
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { generateText, Output, gateway } from 'ai';
+import { readFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
 
 const execFileAsync = promisify(execFile);
@@ -53,11 +56,7 @@ function getFfmpegPath(): string {
 // ─── Types ──────────────────────────────────────────────────
 
 /** A 3x3 homography matrix in row-major order (9 numbers). */
-export type Homography = [
-  number, number, number,
-  number, number, number,
-  number, number, number,
-];
+export type Homography = [number, number, number, number, number, number, number, number, number];
 
 export interface FieldPoint {
   /** Yards downfield from the nearest goal line (0 - 100). */
@@ -102,13 +101,11 @@ export function computeHomographyDLT(
   // For each correspondence (x,y) → (X,Y):
   //   [ x, y, 1, 0, 0, 0, -X*x, -X*y ] h = [ X ]
   //   [ 0, 0, 0, x, y, 1, -Y*x, -Y*y ] h = [ Y ]
-  const n = Math.min(correspondences.length, 8); // we only need 4 but handle up to 8
-  const rowCount = n * 2;
+  const used = correspondences.slice(0, 8); // we only need 4 but handle up to 8
   const A: number[][] = [];
   const b: number[] = [];
 
-  for (let i = 0; i < n; i++) {
-    const c = correspondences[i]!;
+  for (const c of used) {
     const { px: x, py: y } = c.pixel;
     const { fx: X, fy: Y } = c.field;
     A.push([x, y, 1, 0, 0, 0, -X * x, -X * y]);
@@ -122,19 +119,17 @@ export function computeHomographyDLT(
   const sysA = matMul(transpose(A), A);
   const sysB = matVec(transpose(A), b);
   const h = solveLinearSystem(sysA, sysB);
-  if (!h) return null;
+  if (!h || h.length < 8) return null;
 
-  return [h[0]!, h[1]!, h[2]!, h[3]!, h[4]!, h[5]!, h[6]!, h[7]!, 1];
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+  return [h0, h1, h2, h3, h4, h5, h6, h7, 1] as Homography;
 }
 
 /**
  * Transform a pixel point through a homography to field coords.
  * Returns null if the projection lands at infinity.
  */
-export function applyHomography(
-  point: PixelPoint,
-  H: Homography,
-): FieldPoint | null {
+export function applyHomography(point: PixelPoint, H: Homography): FieldPoint | null {
   const { px: x, py: y } = point;
   const w = H[6] * x + H[7] * y + H[8];
   if (Math.abs(w) < 1e-9) return null;
@@ -246,16 +241,26 @@ async function extractCalibrationFrame(
 ): Promise<string | null> {
   const outPath = join(tmpdir(), `cal-${randomUUID()}.jpg`);
   try {
-    await execFileAsync(getFfmpegPath(), [
-      '-y',
-      '-ss', String(timeSeconds),
-      '-i', clipPath,
-      '-frames:v', '1',
-      '-q:v', '2',
-      '-vf', 'scale=1280:-1',
-      '-update', '1',
-      outPath,
-    ], { timeout: 15000 });
+    await execFileAsync(
+      getFfmpegPath(),
+      [
+        '-y',
+        '-ss',
+        String(timeSeconds),
+        '-i',
+        clipPath,
+        '-frames:v',
+        '1',
+        '-q:v',
+        '2',
+        '-vf',
+        'scale=1280:-1',
+        '-update',
+        '1',
+        outPath,
+      ],
+      { timeout: 15000 },
+    );
     const buf = await readFile(outPath);
     return buf.toString('base64');
   } catch {
@@ -268,19 +273,25 @@ async function extractCalibrationFrame(
 // ─── Claude vision calibration ──────────────────────────────
 
 const landmarkSchema = z.object({
-  landmarks: z.array(
-    z.object({
-      description: z.string().describe('What you identified (e.g., "30-yard line meets near sideline")'),
-      /** Image coords, 0-1 normalized. */
-      px: z.number().min(0).max(1),
-      py: z.number().min(0).max(1),
-      /** Yards downfield from near goal line (0-100). */
-      fx: z.number().min(0).max(100),
-      /** Yards from near sideline (0-53.3). */
-      fy: z.number().min(0).max(53.3),
-      confidence: z.number().min(0).max(1),
-    }),
-  ).min(0).max(8).describe('4-6 well-spread field landmarks with pixel and field coords'),
+  landmarks: z
+    .array(
+      z.object({
+        description: z
+          .string()
+          .describe('What you identified (e.g., "30-yard line meets near sideline")'),
+        /** Image coords, 0-1 normalized. */
+        px: z.number().min(0).max(1),
+        py: z.number().min(0).max(1),
+        /** Yards downfield from near goal line (0-100). */
+        fx: z.number().min(0).max(100),
+        /** Yards from near sideline (0-53.3). */
+        fy: z.number().min(0).max(53.3),
+        confidence: z.number().min(0).max(1),
+      }),
+    )
+    .min(0)
+    .max(8)
+    .describe('4-6 well-spread field landmarks with pixel and field coords'),
   /** Whether the frame shows enough of the field to calibrate. */
   calibratable: z.boolean(),
   notes: z.string().optional(),
@@ -318,7 +329,9 @@ near goal line). Use the orientation of the numbers to figure out which end is w
  * Ask Claude to find 4+ field landmarks on a single frame and compute
  * the homography from them. Returns null if the frame isn't calibratable.
  */
-export async function calibrateFieldFromFrame(frameBase64: string): Promise<CalibrationResult | null> {
+export async function calibrateFieldFromFrame(
+  frameBase64: string,
+): Promise<CalibrationResult | null> {
   let parsed: z.infer<typeof landmarkSchema> | null = null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -326,13 +339,18 @@ export async function calibrateFieldFromFrame(frameBase64: string): Promise<Cali
       const { output } = await generateText({
         model: gateway(CALIBRATION_MODEL),
         system: CALIBRATION_SYSTEM,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', image: `data:image/jpeg;base64,${frameBase64}` },
-            { type: 'text', text: 'Identify 4-6 field landmarks on this frame. Return pixel coords (0-1) and field coords (yards).' },
-          ],
-        }],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'image', image: `data:image/jpeg;base64,${frameBase64}` },
+              {
+                type: 'text',
+                text: 'Identify 4-6 field landmarks on this frame. Return pixel coords (0-1) and field coords (yards).',
+              },
+            ],
+          },
+        ],
         output: Output.object({ schema: landmarkSchema }),
       });
       if (output) {
@@ -350,14 +368,12 @@ export async function calibrateFieldFromFrame(frameBase64: string): Promise<Cali
     }
   }
 
-  if (!parsed || !parsed.calibratable || parsed.landmarks.length < 4) {
+  if (!parsed?.calibratable || parsed.landmarks.length < 4) {
     return null;
   }
 
   // Filter to high-confidence landmarks first
-  const highConf = parsed.landmarks
-    .filter((l) => l.confidence >= 0.6)
-    .slice(0, 6);
+  const highConf = parsed.landmarks.filter((l) => l.confidence >= 0.6).slice(0, 6);
   const landmarks = highConf.length >= 4 ? highConf : parsed.landmarks.slice(0, 6);
 
   if (landmarks.length < 4) return null;
@@ -373,7 +389,8 @@ export async function calibrateFieldFromFrame(frameBase64: string): Promise<Cali
   const err = computeReprojectionError(correspondences, H);
   // Sanity check: if reprojection is wildly off, Claude's labels were
   // inconsistent. Reject the calibration.
-  if (err > 8) { // >8 yards mean error = unusable
+  if (err > 8) {
+    // >8 yards mean error = unusable
     console.warn('calibration_rejected_high_error', { err, landmarkCount: landmarks.length });
     return null;
   }

@@ -15,12 +15,12 @@
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { generateText, Output, gateway } from 'ai';
+import { readFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
 import type { PlayerTrack } from './player-tracker';
 
@@ -61,8 +61,9 @@ interface BestMoment {
 function pickBestMomentPerTrack(tracks: PlayerTrack[]): BestMoment[] {
   const moments: BestMoment[] = [];
   for (const trk of tracks) {
-    if (trk.points.length === 0) continue;
-    let best = trk.points[0]!;
+    const [first] = trk.points;
+    if (!first) continue;
+    let best = first;
     let bestScore = best.confidence * best.w * best.h;
     for (const p of trk.points) {
       const score = p.confidence * p.w * p.h;
@@ -105,7 +106,7 @@ async function cropJerseyRegion(
 
   // Jersey region: roughly torso (top 15-50% of bbox), horizontally centered
   const jerseyCenterY = cy - ph * 0.5 + ph * 0.325; // middle of the torso band
-  const jerseyW = pw * 0.80;
+  const jerseyW = pw * 0.8;
   const jerseyH = ph * 0.35;
 
   const cropX = Math.max(0, Math.round(cx - jerseyW / 2));
@@ -118,19 +119,29 @@ async function cropJerseyRegion(
 
   const outPath = join(tmpdir(), `jsy-${randomUUID()}.jpg`);
   try {
-    await execFileAsync(getFfmpegPath(), [
-      '-y',
-      '-ss', String(moment.t),
-      '-i', clipPath,
-      '-frames:v', '1',
-      '-q:v', '2',
-      // Re-extract at 1280-wide so the jersey crop has decent resolution.
-      // crop=W:H:X:Y then scale the crop to a fixed height of 160px so
-      // all crops are normalized for Claude.
-      '-vf', `scale=1280:-1,crop=${cropW}:${cropH}:${cropX}:${cropY},scale=-1:160`,
-      '-update', '1',
-      outPath,
-    ], { timeout: 15000 });
+    await execFileAsync(
+      getFfmpegPath(),
+      [
+        '-y',
+        '-ss',
+        String(moment.t),
+        '-i',
+        clipPath,
+        '-frames:v',
+        '1',
+        '-q:v',
+        '2',
+        // Re-extract at 1280-wide so the jersey crop has decent resolution.
+        // crop=W:H:X:Y then scale the crop to a fixed height of 160px so
+        // all crops are normalized for Claude.
+        '-vf',
+        `scale=1280:-1,crop=${cropW}:${cropH}:${cropX}:${cropY},scale=-1:160`,
+        '-update',
+        '1',
+        outPath,
+      ],
+      { timeout: 15000 },
+    );
 
     const buf = await readFile(outPath);
     if (buf.length < 500) return null; // likely a corrupt/empty frame
@@ -148,7 +159,9 @@ const jerseyResultSchema = z.object({
   results: z.array(
     z.object({
       index: z.number().int().min(0).describe('Zero-based index matching the crop order'),
-      jersey: z.string().describe('Jersey number as a string (e.g. "12", "07"), or "unclear" if unreadable'),
+      jersey: z
+        .string()
+        .describe('Jersey number as a string (e.g. "12", "07"), or "unclear" if unreadable'),
       confidence: z.number().min(0).max(1),
     }),
   ),
@@ -224,10 +237,12 @@ export async function ocrJerseysForTracks(args: {
       const { output } = await generateText({
         model: gateway(OCR_MODEL),
         system: OCR_SYSTEM,
-        messages: [{
-          role: 'user',
-          content: [...imageContent, textContent],
-        }],
+        messages: [
+          {
+            role: 'user',
+            content: [...imageContent, textContent],
+          },
+        ],
         output: Output.object({ schema: jerseyResultSchema }),
       });
       if (output) {

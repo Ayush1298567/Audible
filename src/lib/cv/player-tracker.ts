@@ -1,3 +1,6 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: bounds-checked indexing
+   over detection / track arrays — Hungarian assignment + cost-matrix code
+   relies on dimensional invariants that biome can't statically prove. */
 /**
  * Multi-object player tracker.
  *

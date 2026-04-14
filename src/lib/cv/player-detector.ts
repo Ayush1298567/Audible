@@ -108,10 +108,10 @@ export async function detectPeopleInFrames(
     const batchResults = await Promise.all(
       batch.map(async (f) => {
         try {
-          const { detections, imageWidth, imageHeight } = await detectPeopleInFrame(
-            f.base64,
-            { confidence: opts.confidence, apiKey: opts.apiKey },
-          );
+          const { detections, imageWidth, imageHeight } = await detectPeopleInFrame(f.base64, {
+            confidence: opts.confidence,
+            apiKey: opts.apiKey,
+          });
           return { timestamp: f.timestamp, imageWidth, imageHeight, detections };
         } catch (err) {
           console.warn('detect_frame_failed', { t: f.timestamp, err: String(err).slice(0, 100) });

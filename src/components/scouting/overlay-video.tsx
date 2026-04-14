@@ -33,18 +33,30 @@ export interface PlayerTrack {
  */
 function colorForRole(role?: string): string {
   switch (role) {
-    case 'QB': return '#22d3ee'; // bright cyan
-    case 'RB': return '#67e8f9'; // light cyan
-    case 'WR': return '#06b6d4'; // cyan
-    case 'TE': return '#0891b2'; // darker cyan
-    case 'OL': return '#164e63'; // dim cyan
-    case 'DL': return '#9f1239'; // dim rose
-    case 'LB': return '#e11d48'; // rose
-    case 'CB': return '#f43f5e'; // bright rose
-    case 'S':  return '#fb7185'; // light rose
-    case 'REF': return '#eab308'; // amber
-    case 'SIDELINE': return '#64748b'; // slate
-    default: return '#ffffff'; // unknown / unassigned
+    case 'QB':
+      return '#22d3ee'; // bright cyan
+    case 'RB':
+      return '#67e8f9'; // light cyan
+    case 'WR':
+      return '#06b6d4'; // cyan
+    case 'TE':
+      return '#0891b2'; // darker cyan
+    case 'OL':
+      return '#164e63'; // dim cyan
+    case 'DL':
+      return '#9f1239'; // dim rose
+    case 'LB':
+      return '#e11d48'; // rose
+    case 'CB':
+      return '#f43f5e'; // bright rose
+    case 'S':
+      return '#fb7185'; // light rose
+    case 'REF':
+      return '#eab308'; // amber
+    case 'SIDELINE':
+      return '#64748b'; // slate
+    default:
+      return '#ffffff'; // unknown / unassigned
   }
 }
 
@@ -102,7 +114,7 @@ export function OverlayVideo({
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('seeked', onTimeUpdate);
     };
-  }, [src]);
+  }, []);
 
   // Filter overlays to ones currently visible
   const activeOverlays = overlays.filter((o) => {
@@ -119,7 +131,10 @@ export function OverlayVideo({
   );
 
   return (
-    <div ref={containerRef} className="relative w-full aspect-video rounded-xl overflow-hidden bg-black glow-blue">
+    <div
+      ref={containerRef}
+      className="relative w-full aspect-video rounded-xl overflow-hidden bg-black glow-blue"
+    >
       {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
       <video
         ref={videoRef}
@@ -143,9 +158,7 @@ export function OverlayVideo({
                 className="h-2 w-2 rounded-full"
                 style={{ backgroundColor: colorForRole(role) }}
               />
-              <span className="text-[9px] font-semibold text-white tracking-wider">
-                {role}
-              </span>
+              <span className="text-[9px] font-semibold text-white tracking-wider">{role}</span>
             </div>
           ))}
         </div>
@@ -159,66 +172,61 @@ export function OverlayVideo({
           preserveAspectRatio="none"
         >
           {/* Player tracking dots (bottom layer) */}
-          {trackingEnabled && tracks.map((tr) => {
-            const pos = interpolatePosition(tr, currentTime);
-            if (!pos) return null;
-            const isHighlighted = highlightTrackIds.includes(tr.trackId);
-            const cx = pos.x * dimensions.width;
-            const cy = pos.y * dimensions.height;
-            const r = isHighlighted ? 10 : 6;
-            const baseColor = colorForRole(tr.role);
-            const color = isHighlighted ? '#06b6d4' : baseColor;
-            const opacity = isHighlighted ? 1 : 0.75;
-            return (
-              <g key={tr.trackId}>
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={r + 2}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth="1.5"
-                  opacity={opacity * 0.5}
-                />
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={r}
-                  fill={color}
-                  opacity={opacity}
-                />
-                {tr.jersey && (
-                  <text
-                    x={cx}
-                    y={cy + 3}
-                    fill="#0a0e17"
-                    fontSize="9"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    style={{ fontFamily: 'system-ui, sans-serif' }}
-                  >
-                    {tr.jersey}
-                  </text>
-                )}
-                {tr.role && (
-                  <text
-                    x={cx}
-                    y={cy + r + 11}
-                    fill={color}
-                    fontSize="8"
-                    fontWeight="600"
-                    textAnchor="middle"
-                    style={{
-                      fontFamily: 'system-ui, sans-serif',
-                      filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.8))',
-                    }}
-                  >
-                    {tr.role}
-                  </text>
-                )}
-              </g>
-            );
-          })}
+          {trackingEnabled &&
+            tracks.map((tr) => {
+              const pos = interpolatePosition(tr, currentTime);
+              if (!pos) return null;
+              const isHighlighted = highlightTrackIds.includes(tr.trackId);
+              const cx = pos.x * dimensions.width;
+              const cy = pos.y * dimensions.height;
+              const r = isHighlighted ? 10 : 6;
+              const baseColor = colorForRole(tr.role);
+              const color = isHighlighted ? '#06b6d4' : baseColor;
+              const opacity = isHighlighted ? 1 : 0.75;
+              return (
+                <g key={tr.trackId}>
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={r + 2}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="1.5"
+                    opacity={opacity * 0.5}
+                  />
+                  <circle cx={cx} cy={cy} r={r} fill={color} opacity={opacity} />
+                  {tr.jersey && (
+                    <text
+                      x={cx}
+                      y={cy + 3}
+                      fill="#0a0e17"
+                      fontSize="9"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      style={{ fontFamily: 'system-ui, sans-serif' }}
+                    >
+                      {tr.jersey}
+                    </text>
+                  )}
+                  {tr.role && (
+                    <text
+                      x={cx}
+                      y={cy + r + 11}
+                      fill={color}
+                      fontSize="8"
+                      fontWeight="600"
+                      textAnchor="middle"
+                      style={{
+                        fontFamily: 'system-ui, sans-serif',
+                        filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.8))',
+                      }}
+                    >
+                      {tr.role}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
 
           {/* Insight overlays (top layer) */}
           {activeOverlays.map((o, i) => (
@@ -250,11 +258,11 @@ export function OverlayVideo({
  */
 function interpolatePosition(track: PlayerTrack, t: number): { x: number; y: number } | null {
   const points = track.points;
-  if (points.length === 0) return null;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!first || !last) return null;
 
   // If time is outside track range (with a small tolerance), hide the dot
-  const first = points[0]!;
-  const last = points[points.length - 1]!;
   const buffer = 0.5; // show dot 0.5s before/after track range
   if (t < first.t - buffer || t > last.t + buffer) return null;
 
@@ -264,8 +272,9 @@ function interpolatePosition(track: PlayerTrack, t: number): { x: number; y: num
 
   // Find surrounding points and linearly interpolate
   for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i]!;
-    const b = points[i + 1]!;
+    const a = points[i];
+    const b = points[i + 1];
+    if (!a || !b) continue;
     if (t >= a.t && t <= b.t) {
       const alpha = (t - a.t) / (b.t - a.t);
       return {
@@ -277,7 +286,15 @@ function interpolatePosition(track: PlayerTrack, t: number): { x: number; y: num
   return null;
 }
 
-function OverlayShape({ overlay, width, height }: { overlay: ClipOverlay; width: number; height: number }) {
+function OverlayShape({
+  overlay,
+  width,
+  height,
+}: {
+  overlay: ClipOverlay;
+  width: number;
+  height: number;
+}) {
   const color = overlay.color ?? (overlay.type === 'circle' ? '#06b6d4' : '#f43f5e');
   const x = overlay.x * width;
   const y = overlay.y * height;

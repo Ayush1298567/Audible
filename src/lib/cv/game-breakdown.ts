@@ -12,16 +12,15 @@
  * progress to the UI.
  */
 
-import { Sandbox } from '@vercel/sandbox';
 import { put } from '@vercel/blob';
+import { Sandbox } from '@vercel/sandbox';
 import { withProgramContext } from '@/lib/db/client';
 import { plays } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
-import { detectPlayBoundaries, type DetectedPlay } from './gemini-boundary';
 import { analyzePlayFromBlob, type PlayAnalysis } from './claude-play-analyzer';
-import { trackPlayersInClip } from './track-clip';
+import { type DetectedPlay, detectPlayBoundaries } from './gemini-boundary';
 import type { PlayerTrack } from './player-tracker';
 import type { PlayAnalytics } from './track-analytics';
+import { trackPlayersInClip } from './track-clip';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -46,9 +45,7 @@ export interface JobProgress {
  * Scan the full video with Gemini to find play boundaries.
  * For long videos (>30 min), chunks into segments and runs them sequentially.
  */
-export async function geminiScanPlayBoundaries(
-  videoBlobUrl: string,
-): Promise<DetectedPlay[]> {
+export async function geminiScanPlayBoundaries(videoBlobUrl: string): Promise<DetectedPlay[]> {
   'use step';
 
   // For the first version, send the full video.
@@ -80,7 +77,9 @@ export async function extractPlayClips(
     // Install ffmpeg + download source video + get duration
     const setup = await sandbox.runCommand({
       cmd: 'bash',
-      args: ['-c', `
+      args: [
+        '-c',
+        `
         set -e
         sudo dnf install -y xz >/dev/null 2>&1
         curl -sL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /tmp
@@ -88,7 +87,8 @@ export async function extractPlayClips(
         sudo mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/
         curl -sL "${videoBlobUrl}" -o /tmp/video.mp4
         ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/video.mp4
-      `],
+      `,
+      ],
       sudo: true,
     });
 
@@ -98,7 +98,7 @@ export async function extractPlayClips(
 
     const durationStr = (await setup.stdout()).trim();
     const videoDurationSeconds = Number(durationStr);
-    if (!videoDurationSeconds || !isFinite(videoDurationSeconds)) {
+    if (!videoDurationSeconds || !Number.isFinite(videoDurationSeconds)) {
       throw new Error(`Could not determine video duration: ${durationStr}`);
     }
 
@@ -115,8 +115,7 @@ export async function extractPlayClips(
 
     const clips: Array<{ blobUrl: string; durationSeconds: number; boundary: DetectedPlay }> = [];
 
-    for (let i = 0; i < validBoundaries.length; i++) {
-      const boundary = validBoundaries[i]!;
+    for (const [i, boundary] of validBoundaries.entries()) {
       const duration = Math.min(
         boundary.endSeconds - boundary.startSeconds,
         videoDurationSeconds - boundary.startSeconds,
@@ -137,15 +136,24 @@ export async function extractPlayClips(
         cmd: 'ffmpeg',
         args: [
           '-y',
-          '-ss', String(start),
-          '-i', '/tmp/video.mp4',
-          '-t', String(actualDuration),
-          '-c:v', 'libx264',
-          '-preset', 'veryfast',
-          '-crf', '23',
-          '-c:a', 'aac',
-          '-b:a', '96k',
-          '-movflags', '+faststart',
+          '-ss',
+          String(start),
+          '-i',
+          '/tmp/video.mp4',
+          '-t',
+          String(actualDuration),
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '96k',
+          '-movflags',
+          '+faststart',
           `/tmp/play-${i}.mp4`,
         ],
       });
@@ -163,11 +171,10 @@ export async function extractPlayClips(
       }
 
       // Upload to Blob
-      const blob = await put(
-        `plays/play-${Date.now()}-${i}.mp4`,
-        clipBuffer,
-        { access: 'public', contentType: 'video/mp4' },
-      );
+      const blob = await put(`plays/play-${Date.now()}-${i}.mp4`, clipBuffer, {
+        access: 'public',
+        contentType: 'video/mp4',
+      });
 
       clips.push({
         blobUrl: blob.url,
@@ -278,47 +285,52 @@ export async function savePlayToDb(
   const distBucket = distance <= 3 ? 'short' : distance <= 6 ? 'medium' : 'long';
 
   const [insertedPlay] = await withProgramContext(programId, async (tx) =>
-    tx.insert(plays).values({
-      programId,
-      gameId,
-      playOrder,
-      down: down || null,
-      distance: distance || null,
-      distanceBucket: distBucket,
-      hash: 'Middle', // TODO: from analysis
-      yardLine: boundary.yardLine || null,
-      quarter: boundary.quarter || 1,
-      formation: analysis?.formation ?? boundary.formation,
-      personnel: analysis?.personnel?.slice(0, 10) ?? null,
-      motion: analysis?.motion ?? null,
-      playType: analysis?.playType ?? boundary.playType,
-      playDirection: analysis?.playDirection ?? boundary.direction,
-      gainLoss: Math.round(dist),
-      result: analysis?.result ?? boundary.result,
-      clipStartSeconds: boundary.startSeconds,
-      clipEndSeconds: boundary.endSeconds,
-      clipBlobKey: clipBlobUrl,
-      status: 'ready',
-      coachOverride: analysis ? {
-        aiCoverage: analysis.coverageShell,
-        aiDefensiveFront: analysis.defensiveFront,
-        aiPressure: analysis.pressureType,
-        aiRouteConcept: analysis.routeConcept ?? 'N/A',
-        aiRunGap: analysis.runGap ?? 'N/A',
-        aiBlockingScheme: analysis.blockingScheme ?? 'N/A',
-        aiPreSnapRead: analysis.preSnapCoverageRead,
-        aiConfidence: String(analysis.confidence),
-        aiReasoning: analysis.reasoning,
-        aiObservations: analysis.keyObservations.join(' | '),
-        tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
-        analytics: analytics ? JSON.stringify(analytics) : undefined,
-      } : {
-        aiConfidence: String(boundary.confidence),
-        geminiOnly: 'true',
-        tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
-        analytics: analytics ? JSON.stringify(analytics) : undefined,
-      },
-    }).returning({ id: plays.id }),
+    tx
+      .insert(plays)
+      .values({
+        programId,
+        gameId,
+        playOrder,
+        down: down || null,
+        distance: distance || null,
+        distanceBucket: distBucket,
+        hash: 'Middle', // TODO: from analysis
+        yardLine: boundary.yardLine || null,
+        quarter: boundary.quarter || 1,
+        formation: analysis?.formation ?? boundary.formation,
+        personnel: analysis?.personnel?.slice(0, 10) ?? null,
+        motion: analysis?.motion ?? null,
+        playType: analysis?.playType ?? boundary.playType,
+        playDirection: analysis?.playDirection ?? boundary.direction,
+        gainLoss: Math.round(dist),
+        result: analysis?.result ?? boundary.result,
+        clipStartSeconds: boundary.startSeconds,
+        clipEndSeconds: boundary.endSeconds,
+        clipBlobKey: clipBlobUrl,
+        status: 'ready',
+        coachOverride: analysis
+          ? {
+              aiCoverage: analysis.coverageShell,
+              aiDefensiveFront: analysis.defensiveFront,
+              aiPressure: analysis.pressureType,
+              aiRouteConcept: analysis.routeConcept ?? 'N/A',
+              aiRunGap: analysis.runGap ?? 'N/A',
+              aiBlockingScheme: analysis.blockingScheme ?? 'N/A',
+              aiPreSnapRead: analysis.preSnapCoverageRead,
+              aiConfidence: String(analysis.confidence),
+              aiReasoning: analysis.reasoning,
+              aiObservations: analysis.keyObservations.join(' | '),
+              tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
+              analytics: analytics ? JSON.stringify(analytics) : undefined,
+            }
+          : {
+              aiConfidence: String(boundary.confidence),
+              geminiOnly: 'true',
+              tracks: tracks.length > 0 ? JSON.stringify(tracks) : undefined,
+              analytics: analytics ? JSON.stringify(analytics) : undefined,
+            },
+      })
+      .returning({ id: plays.id }),
   );
 
   return insertedPlay?.id ?? '';
@@ -350,8 +362,7 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
 
   // Stage 3 + 4: Claude analyzes + Roboflow tracks each clip, then saves to DB
   let saved = 0;
-  for (let i = 0; i < clips.length; i++) {
-    const { blobUrl, durationSeconds, boundary } = clips[i]!;
+  for (const [i, { blobUrl, durationSeconds, boundary }] of clips.entries()) {
 
     // Claude analysis first so its output (formation, playType, coverage)
     // feeds role inference downstream. Each call is its own durable step

@@ -6,17 +6,22 @@
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import {
+  applyHomography,
+  type CalibrationResult,
+  calibrateFieldFromClip,
+  computeHomographyDLT,
+} from './field-homography';
+import { applyJerseysToTracks, ocrJerseysForTracks } from './jersey-ocr';
 import { detectPeopleInFrames } from './player-detector';
-import { trackDetections, type PlayerTrack } from './player-tracker';
-import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
-import { calibrateFieldFromClip, applyHomography, computeHomographyDLT, type CalibrationResult } from './field-homography';
+import { type PlayerTrack, trackDetections } from './player-tracker';
+import { applyRolesToTracks, inferTrackRoles } from './role-inference';
 import { computePlayAnalytics, type PlayAnalytics } from './track-analytics';
-import { inferTrackRoles, applyRolesToTracks } from './role-inference';
 
 const execFileAsync = promisify(execFile);
 
@@ -116,16 +121,26 @@ export async function trackPlayersInClip(
   for (const t of timestamps) {
     const framePath = join(tmpdir(), `trk-${randomUUID()}.jpg`);
     try {
-      await execFileAsync(ffmpeg, [
-        '-y',
-        '-ss', String(t),
-        '-i', clipPath,
-        '-frames:v', '1',
-        '-q:v', '3',
-        '-vf', 'scale=640:-1',
-        '-update', '1',
-        framePath,
-      ], { timeout: 15000 });
+      await execFileAsync(
+        ffmpeg,
+        [
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          clipPath,
+          '-frames:v',
+          '1',
+          '-q:v',
+          '3',
+          '-vf',
+          'scale=640:-1',
+          '-update',
+          '1',
+          framePath,
+        ],
+        { timeout: 15000 },
+      );
       const buf = await readFile(framePath);
       frames.push({ timestamp: t, base64: buf.toString('base64') });
       await unlink(framePath).catch(() => {});
@@ -242,9 +257,7 @@ export async function trackPlayersInClip(
         .map((t) => t.points[0]?.fx)
         .filter((v): v is number => v !== undefined)
         .sort((a, b) => a - b);
-      const los = startXs.length > 0
-        ? startXs[Math.floor(startXs.length / 2)]
-        : undefined;
+      const los = startXs.length > 0 ? startXs[Math.floor(startXs.length / 2)] : undefined;
 
       const roleResult = await inferTrackRoles({
         tracks,

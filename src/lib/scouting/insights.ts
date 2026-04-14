@@ -46,7 +46,16 @@ export interface InsightExample {
   /** Optional player tracks rendered as moving dots on the clip. */
   tracks?: Array<{
     trackId: string;
-    points: Array<{ t: number; x: number; y: number; w: number; h: number; confidence: number; fx?: number; fy?: number }>;
+    points: Array<{
+      t: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      confidence: number;
+      fx?: number;
+      fy?: number;
+    }>;
     jersey?: string;
     role?: string;
   }>;

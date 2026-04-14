@@ -1,11 +1,11 @@
-import { beginSpan } from '@/lib/observability/log';
-import { withProgramContext } from '@/lib/db/client';
-import { plays, games, opponents } from '@/lib/db/schema';
-import { generateText, Output, gateway } from 'ai';
+import { gateway, generateText, Output } from 'ai';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
-import type { Walkthrough, InsightExample } from '@/lib/scouting/insights';
 import { aggregateByPlayType, type PlayAnalytics } from '@/lib/cv/track-analytics';
+import { withProgramContext } from '@/lib/db/client';
+import { games, opponents, plays } from '@/lib/db/schema';
+import { beginSpan } from '@/lib/observability/log';
+import type { InsightExample, Walkthrough } from '@/lib/scouting/insights';
 
 export const maxDuration = 180;
 
@@ -26,20 +26,35 @@ const requestSchema = z.object({
 const curatedInsightSchema = z.object({
   headline: z.string().max(60).describe('Short headline in CAPS, max 6 words'),
   narrative: z.string().min(40).max(400).describe('2-3 sentences explaining the tendency'),
-  evidence_play_ids: z.array(z.string()).min(1).max(5).describe('Play IDs that best demonstrate this. 1-5 clips.'),
-  recommendations: z.array(z.string().min(5).max(120)).min(1).max(4).describe('Concrete plays the coach should call'),
-  overlays_per_play: z.record(z.string(), z.array(z.object({
-    timestamp: z.number().describe('Seconds from clip start'),
-    duration: z.number().optional(),
-    type: z.enum(['circle', 'arrow', 'label', 'zone']),
-    x: z.number().min(0).max(1),
-    y: z.number().min(0).max(1),
-    toX: z.number().min(0).max(1).optional(),
-    toY: z.number().min(0).max(1).optional(),
-    radius: z.number().min(0).max(1).optional(),
-    label: z.string().max(30).optional(),
-    color: z.string().optional(),
-  }))).describe('Per-play overlays, keyed by play ID'),
+  evidence_play_ids: z
+    .array(z.string())
+    .min(1)
+    .max(5)
+    .describe('Play IDs that best demonstrate this. 1-5 clips.'),
+  recommendations: z
+    .array(z.string().min(5).max(120))
+    .min(1)
+    .max(4)
+    .describe('Concrete plays the coach should call'),
+  overlays_per_play: z
+    .record(
+      z.string(),
+      z.array(
+        z.object({
+          timestamp: z.number().describe('Seconds from clip start'),
+          duration: z.number().optional(),
+          type: z.enum(['circle', 'arrow', 'label', 'zone']),
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          toX: z.number().min(0).max(1).optional(),
+          toY: z.number().min(0).max(1).optional(),
+          radius: z.number().min(0).max(1).optional(),
+          label: z.string().max(30).optional(),
+          color: z.string().optional(),
+        }),
+      ),
+    )
+    .describe('Per-play overlays, keyed by play ID'),
 });
 
 const responseSchema = z.object({
@@ -76,7 +91,8 @@ export async function POST(req: Request): Promise<Response> {
 
     // Load opponent info
     const [opp] = await withProgramContext(input.programId, async (tx) =>
-      tx.select({ id: opponents.id, name: opponents.name })
+      tx
+        .select({ id: opponents.id, name: opponents.name })
         .from(opponents)
         .where(and(eq(opponents.id, input.opponentId), eq(opponents.programId, input.programId))),
     );
@@ -87,26 +103,29 @@ export async function POST(req: Request): Promise<Response> {
 
     // Load all analyzed plays for this opponent
     const allPlays = await withProgramContext(input.programId, async (tx) =>
-      tx.select({
-        id: plays.id,
-        down: plays.down,
-        distance: plays.distance,
-        quarter: plays.quarter,
-        formation: plays.formation,
-        playType: plays.playType,
-        playDirection: plays.playDirection,
-        gainLoss: plays.gainLoss,
-        result: plays.result,
-        clipBlobKey: plays.clipBlobKey,
-        coachOverride: plays.coachOverride,
-      })
+      tx
+        .select({
+          id: plays.id,
+          down: plays.down,
+          distance: plays.distance,
+          quarter: plays.quarter,
+          formation: plays.formation,
+          playType: plays.playType,
+          playDirection: plays.playDirection,
+          gainLoss: plays.gainLoss,
+          result: plays.result,
+          clipBlobKey: plays.clipBlobKey,
+          coachOverride: plays.coachOverride,
+        })
         .from(plays)
         .innerJoin(games, eq(plays.gameId, games.id))
-        .where(and(
-          eq(plays.programId, input.programId),
-          eq(games.opponentId, input.opponentId),
-          eq(plays.status, 'ready'),
-        )),
+        .where(
+          and(
+            eq(plays.programId, input.programId),
+            eq(games.opponentId, input.opponentId),
+            eq(plays.status, 'ready'),
+          ),
+        ),
     );
 
     if (allPlays.length === 0) {
@@ -118,7 +137,11 @@ export async function POST(req: Request): Promise<Response> {
     const parsedAnalytics = allPlays.map((p) => {
       const raw = (p.coachOverride as { analytics?: string | unknown })?.analytics;
       if (typeof raw === 'string') {
-        try { return JSON.parse(raw) as PlayAnalytics; } catch { return null; }
+        try {
+          return JSON.parse(raw) as PlayAnalytics;
+        } catch {
+          return null;
+        }
       }
       return raw ? (raw as PlayAnalytics) : null;
     });
@@ -149,12 +172,16 @@ export async function POST(req: Request): Promise<Response> {
         gap: (p.coachOverride as { aiRunGap?: string })?.aiRunGap,
         observations: (p.coachOverride as { aiObservations?: string })?.aiObservations,
         // CV-derived measurements — only set when the clip was field-calibrated
-        peakSpeedYps: isFieldSpace && a && a.peakSpeedYps > 0
-          ? Number(a.peakSpeedYps.toFixed(1)) : undefined,
-        playDurationSec: a?.playDurationSeconds && a.playDurationSeconds > 0
-          ? Number(a.playDurationSeconds.toFixed(1)) : undefined,
-        maxDepthYards: deepest?.maxDepthYards !== undefined
-          ? Number(deepest.maxDepthYards.toFixed(1)) : undefined,
+        peakSpeedYps:
+          isFieldSpace && a && a.peakSpeedYps > 0 ? Number(a.peakSpeedYps.toFixed(1)) : undefined,
+        playDurationSec:
+          a?.playDurationSeconds && a.playDurationSeconds > 0
+            ? Number(a.playDurationSeconds.toFixed(1))
+            : undefined,
+        maxDepthYards:
+          deepest?.maxDepthYards !== undefined
+            ? Number(deepest.maxDepthYards.toFixed(1))
+            : undefined,
       };
     });
 
@@ -167,13 +194,14 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
-    const analyticsHeader = aggregated.fieldRegisteredPlays > 0
-      ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
+    const analyticsHeader =
+      aggregated.fieldRegisteredPlays > 0
+        ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
   Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
   Avg play duration: ${aggregated.avgPlayDurationSeconds.toFixed(1)} s
   Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}\n`
-      : '';
+        : '';
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
@@ -206,9 +234,9 @@ export async function POST(req: Request): Promise<Response> {
         examples: ins.evidence_play_ids
           .map((pid) => {
             const p = playMap.get(pid);
-            if (!p || !p.clipBlobKey) return null;
+            if (!p?.clipBlobKey) return null;
             // Extract tracks from coachOverride JSON if present
-            let tracks: InsightExample['tracks'] = undefined;
+            let tracks: InsightExample['tracks'];
             const rawTracks = (p.coachOverride as { tracks?: string | unknown })?.tracks;
             if (typeof rawTracks === 'string') {
               try {
@@ -223,11 +251,15 @@ export async function POST(req: Request): Promise<Response> {
             let playAnalytics: PlayAnalytics | null = null;
             const rawAnalytics = (p.coachOverride as { analytics?: string | unknown })?.analytics;
             if (typeof rawAnalytics === 'string') {
-              try { playAnalytics = JSON.parse(rawAnalytics) as PlayAnalytics; } catch { /* ignore */ }
+              try {
+                playAnalytics = JSON.parse(rawAnalytics) as PlayAnalytics;
+              } catch {
+                /* ignore */
+              }
             } else if (rawAnalytics) {
               playAnalytics = rawAnalytics as PlayAnalytics;
             }
-            let measurements: InsightExample['measurements'] = undefined;
+            let measurements: InsightExample['measurements'];
             // Only surface measurements when calibration succeeded — pixel-space
             // speeds/distances are meaningless and would mislead the coach. Play
             // duration is always valid (it's just elapsed seconds).
@@ -239,18 +271,21 @@ export async function POST(req: Request): Promise<Response> {
                 (t) => t.trackId === playAnalytics.deepestTrackId,
               );
               measurements = {
-                peakSpeedYps: playAnalytics.peakSpeedYps > 0
-                  ? Number(playAnalytics.peakSpeedYps.toFixed(1))
-                  : undefined,
+                peakSpeedYps:
+                  playAnalytics.peakSpeedYps > 0
+                    ? Number(playAnalytics.peakSpeedYps.toFixed(1))
+                    : undefined,
                 peakSpeedPlayer: peakTrack
                   ? { jersey: peakTrack.jersey, role: peakTrack.role }
                   : undefined,
-                maxDepthYards: deepest?.maxDepthYards !== undefined
-                  ? Number(deepest.maxDepthYards.toFixed(1))
-                  : undefined,
-                playDurationSec: playAnalytics.playDurationSeconds > 0
-                  ? Number(playAnalytics.playDurationSeconds.toFixed(1))
-                  : undefined,
+                maxDepthYards:
+                  deepest?.maxDepthYards !== undefined
+                    ? Number(deepest.maxDepthYards.toFixed(1))
+                    : undefined,
+                playDurationSec:
+                  playAnalytics.playDurationSeconds > 0
+                    ? Number(playAnalytics.playDurationSeconds.toFixed(1))
+                    : undefined,
                 fieldRegistered: true,
               };
             } else if (playAnalytics && playAnalytics.playDurationSeconds > 0) {
@@ -263,9 +298,11 @@ export async function POST(req: Request): Promise<Response> {
             }
             return {
               playId: pid,
-              label: `${p.down ?? '?'}&${p.distance ?? '?'} · Q${p.quarter ?? '?'} · ${p.formation ?? ''}`.trim(),
+              label:
+                `${p.down ?? '?'}&${p.distance ?? '?'} · Q${p.quarter ?? '?'} · ${p.formation ?? ''}`.trim(),
               clipUrl: p.clipBlobKey,
-              description: `${p.playType ?? 'Play'} ${p.playDirection ?? ''} — ${p.result ?? `${p.gainLoss ?? 0} yd`}`.trim(),
+              description:
+                `${p.playType ?? 'Play'} ${p.playDirection ?? ''} — ${p.result ?? `${p.gainLoss ?? 0} yd`}`.trim(),
               overlays: ins.overlays_per_play[pid] ?? [],
               tracks,
               measurements,
@@ -286,5 +323,9 @@ export async function POST(req: Request): Promise<Response> {
 }
 
 function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50);
 }

@@ -1,3 +1,5 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: bounds-checked indexing
+   over track point arrays in the feature-extraction inner loop. */
 /**
  * Role inference for tracked players.
  *
@@ -20,14 +22,27 @@
  * reliable without yard coords.
  */
 
-import { generateText, Output, gateway } from 'ai';
+import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
 import type { PlayerTrack } from './player-tracker';
 
 const ROLE_MODEL = 'anthropic/claude-sonnet-4.6';
 
-const ROLE_VALUES = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'REF', 'SIDELINE', 'UNKNOWN'] as const;
-type Role = typeof ROLE_VALUES[number];
+const ROLE_VALUES = [
+  'QB',
+  'RB',
+  'WR',
+  'TE',
+  'OL',
+  'DL',
+  'LB',
+  'CB',
+  'S',
+  'REF',
+  'SIDELINE',
+  'UNKNOWN',
+] as const;
+type Role = (typeof ROLE_VALUES)[number];
 
 // ─── Feature extraction ─────────────────────────────────────
 
@@ -59,7 +74,8 @@ function extractFeatures(track: PlayerTrack): TrackFeatures | null {
   // Require field-space coords for reliable classification
   const firstField = pts.find((p) => p.fx !== undefined && p.fy !== undefined);
   const lastField = [...pts].reverse().find((p) => p.fx !== undefined && p.fy !== undefined);
-  if (!firstField || !lastField || firstField.fx === undefined || lastField.fx === undefined) return null;
+  if (!firstField || !lastField || firstField.fx === undefined || lastField.fx === undefined)
+    return null;
 
   let maxSpeed = 0;
   let totalYards = 0;
@@ -68,7 +84,8 @@ function extractFeatures(track: PlayerTrack): TrackFeatures | null {
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1]!;
     const b = pts[i]!;
-    if (a.fx === undefined || a.fy === undefined || b.fx === undefined || b.fy === undefined) continue;
+    if (a.fx === undefined || a.fy === undefined || b.fx === undefined || b.fy === undefined)
+      continue;
     const dt = b.t - a.t;
     if (dt <= 0) continue;
     const dx = b.fx - a.fx;
@@ -173,7 +190,9 @@ export async function inferTrackRoles(args: {
     args.playType ? `Play type: ${args.playType}` : null,
     args.formation ? `Formation: ${args.formation}` : null,
     args.coverage ? `Coverage: ${args.coverage}` : null,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   let parsed: z.infer<typeof roleSchema> | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {

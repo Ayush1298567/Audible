@@ -16,12 +16,12 @@
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { generateText, Output, gateway } from 'ai';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
 
 const execFileAsync = promisify(execFile);
@@ -32,47 +32,100 @@ const ANALYZER_MODEL = 'anthropic/claude-sonnet-4.6';
 
 export const playAnalysisSchema = z.object({
   // PRE-SNAP — visible before ball moves
-  formation: z.string().describe('Offensive formation (Shotgun Spread, Trips Rt, Pistol, I-Form, Singleback, Empty, Wildcat, etc)'),
+  formation: z
+    .string()
+    .describe(
+      'Offensive formation (Shotgun Spread, Trips Rt, Pistol, I-Form, Singleback, Empty, Wildcat, etc)',
+    ),
   personnel: z.string().describe('Personnel grouping as XY (10, 11, 12, 13, 20, 21, 22, 23)'),
-  motion: z.string().describe('Pre-snap motion if any (e.g. "WR motions across", "jet motion right"), or "None"'),
-  preSnapCoverageRead: z.string().describe('What the safeties show pre-snap (single_high, two_high, cover_0_look, disguised, unknown)'),
+  motion: z
+    .string()
+    .describe('Pre-snap motion if any (e.g. "WR motions across", "jet motion right"), or "None"'),
+  preSnapCoverageRead: z
+    .string()
+    .describe(
+      'What the safeties show pre-snap (single_high, two_high, cover_0_look, disguised, unknown)',
+    ),
 
   // AT/POST-SNAP — determined from motion across frames
-  coverageShell: z.string().describe('Actual coverage played (cover_0, cover_1, cover_2, cover_3, cover_4, quarters, man_free, man_under, unknown)'),
-  defensiveFront: z.string().describe('Front structure (4-3 Over, 4-3 Under, 3-4, Nickel 4-2-5, Dime 3-3-5, etc)'),
-  pressureType: z.string().describe('Pressure type (base_4, base_5, lb_blitz, db_blitz, zero_blitz, dl_stunt, lb_stunt, no_pressure, unknown)'),
+  coverageShell: z
+    .string()
+    .describe(
+      'Actual coverage played (cover_0, cover_1, cover_2, cover_3, cover_4, quarters, man_free, man_under, unknown)',
+    ),
+  defensiveFront: z
+    .string()
+    .describe('Front structure (4-3 Over, 4-3 Under, 3-4, Nickel 4-2-5, Dime 3-3-5, etc)'),
+  pressureType: z
+    .string()
+    .describe(
+      'Pressure type (base_4, base_5, lb_blitz, db_blitz, zero_blitz, dl_stunt, lb_stunt, no_pressure, unknown)',
+    ),
 
   // PLAY EXECUTION
-  playType: z.string().describe('Play type (Run, Pass, RPO, Screen, Play Action, QB Run, Kneel, Spike, Punt, FG, Kickoff, Unknown)'),
+  playType: z
+    .string()
+    .describe(
+      'Play type (Run, Pass, RPO, Screen, Play Action, QB Run, Kneel, Spike, Punt, FG, Kickoff, Unknown)',
+    ),
   playDirection: z.string().describe('Direction (Left, Right, Middle, N/A)'),
   // Only relevant for runs
-  runGap: z.string().optional().describe('Run gap (A_left, A_right, B_left, B_right, C_left, C_right, D_left, D_right, N/A)'),
-  blockingScheme: z.string().optional().describe('Blocking scheme (inside_zone, outside_zone, power, counter, trap, draw, pass_pro, screen, unknown, N/A)'),
+  runGap: z
+    .string()
+    .optional()
+    .describe('Run gap (A_left, A_right, B_left, B_right, C_left, C_right, D_left, D_right, N/A)'),
+  blockingScheme: z
+    .string()
+    .optional()
+    .describe(
+      'Blocking scheme (inside_zone, outside_zone, power, counter, trap, draw, pass_pro, screen, unknown, N/A)',
+    ),
   // Only relevant for passes
-  routeConcept: z.string().optional().describe('Route concept (mesh, levels, flood, stick, slant_flat, four_verts, curl_flat, spacing, screen, rpo_glance, scramble, unknown, N/A)'),
+  routeConcept: z
+    .string()
+    .optional()
+    .describe(
+      'Route concept (mesh, levels, flood, stick, slant_flat, four_verts, curl_flat, spacing, screen, rpo_glance, scramble, unknown, N/A)',
+    ),
 
   // RESULT
   yardsGained: z.number(),
-  result: z.string().describe('Plain-English result ("12 yd gain", "TD", "incomplete", "sack -5", "INT", "penalty, declined")'),
+  result: z
+    .string()
+    .describe(
+      'Plain-English result ("12 yd gain", "TD", "incomplete", "sack -5", "INT", "penalty, declined")',
+    ),
 
   // CONFIDENCE + REASONING
   confidence: z.number().min(0).max(1),
-  keyObservations: z.array(z.string().max(300)).min(1).max(5).describe('2-4 things a coach should notice on this play'),
+  keyObservations: z
+    .array(z.string().max(300))
+    .min(1)
+    .max(5)
+    .describe('2-4 things a coach should notice on this play'),
   reasoning: z.string().min(20).max(1500),
 
   // FIELD CALIBRATION (M3) — optional; identify 4-6 field landmarks on the
   // pre_snap frame so we can compute a pixel→yard homography. Saves a
   // separate Claude call per clip.
-  fieldLandmarks: z.array(
-    z.object({
-      description: z.string().describe('What was identified (e.g. "30-yard line meets near sideline")'),
-      px: z.number().min(0).max(1).describe('Normalized x in the pre_snap frame (0-1)'),
-      py: z.number().min(0).max(1).describe('Normalized y in the pre_snap frame (0-1)'),
-      fx: z.number().min(0).max(100).describe('Yards downfield from near goal line (0-100)'),
-      fy: z.number().min(0).max(53.3).describe('Yards from near sideline (0-53.3)'),
-      confidence: z.number().min(0).max(1),
-    }),
-  ).max(8).optional().describe('4-6 field landmarks from the pre_snap frame. Empty if the field markings are not visible.'),
+  fieldLandmarks: z
+    .array(
+      z.object({
+        description: z
+          .string()
+          .describe('What was identified (e.g. "30-yard line meets near sideline")'),
+        px: z.number().min(0).max(1).describe('Normalized x in the pre_snap frame (0-1)'),
+        py: z.number().min(0).max(1).describe('Normalized y in the pre_snap frame (0-1)'),
+        fx: z.number().min(0).max(100).describe('Yards downfield from near goal line (0-100)'),
+        fy: z.number().min(0).max(53.3).describe('Yards from near sideline (0-53.3)'),
+        confidence: z.number().min(0).max(1),
+      }),
+    )
+    .max(8)
+    .optional()
+    .describe(
+      '4-6 field landmarks from the pre_snap frame. Empty if the field markings are not visible.',
+    ),
 });
 
 export type PlayAnalysis = z.infer<typeof playAnalysisSchema>;
@@ -115,16 +168,26 @@ async function extractSequentialFrames(
   for (const { label, t } of targets) {
     const outPath = join(tmpdir(), `seq-${randomUUID()}.jpg`);
     try {
-      await execFileAsync(getFfmpegPath(), [
-        '-y',
-        '-ss', String(t),
-        '-i', clipPath,
-        '-frames:v', '1',
-        '-q:v', '3',
-        '-vf', 'scale=640:-1',
-        '-update', '1',
-        outPath,
-      ], { timeout: 15000 });
+      await execFileAsync(
+        getFfmpegPath(),
+        [
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          clipPath,
+          '-frames:v',
+          '1',
+          '-q:v',
+          '3',
+          '-vf',
+          'scale=640:-1',
+          '-update',
+          '1',
+          outPath,
+        ],
+        { timeout: 15000 },
+      );
 
       const buf = await readFile(outPath);
       frames.push({
@@ -222,10 +285,12 @@ export async function analyzePlayClip(input: PlayAnalysisInput): Promise<PlayAna
       const { output } = await generateText({
         model: gateway(ANALYZER_MODEL),
         system: SYSTEM_PROMPT,
-        messages: [{
-          role: 'user',
-          content: [...imageContent, textContent],
-        }],
+        messages: [
+          {
+            role: 'user',
+            content: [...imageContent, textContent],
+          },
+        ],
         output: Output.object({ schema: playAnalysisSchema }),
       });
 

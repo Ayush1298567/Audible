@@ -1,3 +1,6 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: bounds-checked indexing
+   over track point arrays — non-null assertions are correct in these inner
+   loops, and `?? 0` defaults would silently mask tracking bugs. */
 /**
  * Per-play analytics computed from field-space tracks.
  *
@@ -68,14 +71,20 @@ export interface PlayAnalytics {
 // ─── Per-track math ─────────────────────────────────────────
 
 function dist(a: TrackPoint, b: TrackPoint, fieldSpace: boolean): number {
-  if (fieldSpace && a.fx !== undefined && a.fy !== undefined && b.fx !== undefined && b.fy !== undefined) {
+  if (
+    fieldSpace &&
+    a.fx !== undefined &&
+    a.fy !== undefined &&
+    b.fx !== undefined &&
+    b.fy !== undefined
+  ) {
     const dx = b.fx - a.fx;
     const dy = b.fy - a.fy;
     return Math.sqrt(dx * dx + dy * dy);
   }
   // Pixel-space fallback — meaningless magnitude but preserves ordering
-  const dx = (b.x - a.x);
-  const dy = (b.y - a.y);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
@@ -131,7 +140,7 @@ function computeTrackAnalytics(trk: PlayerTrack, fieldSpace: boolean): TrackAnal
       if (p.fy < minFy) minFy = p.fy;
       if (p.fy > maxFy) maxFy = p.fy;
     }
-    if (isFinite(minFx)) {
+    if (Number.isFinite(minFx)) {
       base.maxDepthYards = maxFx;
       const first = pts.find((p) => p.fx !== undefined);
       const last = [...pts].reverse().find((p) => p.fx !== undefined);
@@ -166,25 +175,30 @@ export function minSeparation(
   const tEnd = Math.min(aEnd, bEnd);
   if (tEnd <= tStart) return null;
 
-  // Sample at 10Hz across overlap
+  // Sample at 10Hz across overlap. Using index-based iteration instead of
+  // accumulating floats, which can drift and miss the final sample point.
   const step = 0.1;
+  const nSteps = Math.max(1, Math.floor((tEnd - tStart) / step));
   let minD = Infinity;
   let minT = tStart;
 
-  for (let t = tStart; t <= tEnd; t += step) {
+  for (let i = 0; i <= nSteps; i++) {
+    // Final iteration lands exactly on tEnd to avoid endpoint drift.
+    const t = i === nSteps ? tEnd : tStart + i * step;
     const pa = interpolateAtT(a.points, t);
     const pb = interpolateAtT(b.points, t);
     if (!pa || !pb) continue;
-    const d = fieldSpace && pa.fx !== undefined && pb.fx !== undefined
-      ? Math.sqrt((pa.fx - pb.fx) ** 2 + (pa.fy! - pb.fy!) ** 2)
-      : Math.sqrt((pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2);
+    const d =
+      fieldSpace && pa.fx !== undefined && pb.fx !== undefined
+        ? Math.sqrt((pa.fx - pb.fx) ** 2 + (pa.fy! - pb.fy!) ** 2)
+        : Math.sqrt((pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2);
     if (d < minD) {
       minD = d;
       minT = t;
     }
   }
 
-  if (!isFinite(minD)) return null;
+  if (!Number.isFinite(minD)) return null;
 
   // Closing speed: compare separation at minT vs 0.5s earlier
   const earlier = Math.max(tStart, minT - 0.5);
@@ -192,9 +206,10 @@ export function minSeparation(
   const pbE = interpolateAtT(b.points, earlier);
   let closing = 0;
   if (paE && pbE) {
-    const dE = fieldSpace && paE.fx !== undefined && pbE.fx !== undefined
-      ? Math.sqrt((paE.fx - pbE.fx) ** 2 + (paE.fy! - pbE.fy!) ** 2)
-      : Math.sqrt((paE.x - pbE.x) ** 2 + (paE.y - pbE.y) ** 2);
+    const dE =
+      fieldSpace && paE.fx !== undefined && pbE.fx !== undefined
+        ? Math.sqrt((paE.fx - pbE.fx) ** 2 + (paE.fy! - pbE.fy!) ** 2)
+        : Math.sqrt((paE.x - pbE.x) ** 2 + (paE.y - pbE.y) ** 2);
     const dt = minT - earlier;
     if (dt > 0) closing = Math.max(0, (dE - minD) / dt);
   }
@@ -260,7 +275,7 @@ export function computePlayAnalytics(tracks: PlayerTrack[]): PlayAnalytics {
     if (s < minStart) minStart = s;
     if (e > maxEnd) maxEnd = e;
   }
-  const playDuration = isFinite(minStart) && isFinite(maxEnd) ? maxEnd - minStart : 0;
+  const playDuration = Number.isFinite(minStart) && Number.isFinite(maxEnd) ? maxEnd - minStart : 0;
 
   return {
     tracks: trackStats,
@@ -310,7 +325,10 @@ export function aggregateByPlayType(
   let depthSum = 0;
   let depthN = 0;
 
-  const byType = new Map<string, { count: number; peak: number[]; depth: number[]; dur: number[] }>();
+  const byType = new Map<
+    string,
+    { count: number; peak: number[]; depth: number[]; dur: number[] }
+  >();
 
   for (const p of plays) {
     if (!p.analytics) continue;
