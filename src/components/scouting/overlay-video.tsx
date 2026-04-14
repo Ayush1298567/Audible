@@ -27,6 +27,27 @@ export interface PlayerTrack {
   role?: string;
 }
 
+/**
+ * Color dots by football role so the coach can immediately see who's who.
+ * Offense = cyan family, defense = rose family, other = neutral.
+ */
+function colorForRole(role?: string): string {
+  switch (role) {
+    case 'QB': return '#22d3ee'; // bright cyan
+    case 'RB': return '#67e8f9'; // light cyan
+    case 'WR': return '#06b6d4'; // cyan
+    case 'TE': return '#0891b2'; // darker cyan
+    case 'OL': return '#164e63'; // dim cyan
+    case 'DL': return '#9f1239'; // dim rose
+    case 'LB': return '#e11d48'; // rose
+    case 'CB': return '#f43f5e'; // bright rose
+    case 'S':  return '#fb7185'; // light rose
+    case 'REF': return '#eab308'; // amber
+    case 'SIDELINE': return '#64748b'; // slate
+    default: return '#ffffff'; // unknown / unassigned
+  }
+}
+
 interface Props {
   src: string;
   overlays: ClipOverlay[];
@@ -89,6 +110,14 @@ export function OverlayVideo({
     return currentTime >= o.timestamp && currentTime <= o.timestamp + duration;
   });
 
+  const rolesShown = Array.from(
+    new Set(
+      tracks
+        .map((t) => t.role)
+        .filter((r): r is string => !!r && r !== 'REF' && r !== 'SIDELINE' && r !== 'UNKNOWN'),
+    ),
+  );
+
   return (
     <div ref={containerRef} className="relative w-full aspect-video rounded-xl overflow-hidden bg-black glow-blue">
       {/* biome-ignore lint/a11y/useMediaCaption: football film clips do not have caption tracks */}
@@ -101,6 +130,26 @@ export function OverlayVideo({
         className="absolute inset-0 w-full h-full"
         onEnded={onEnded}
       />
+
+      {/* Role legend — top-left, fades out when video plays */}
+      {trackingEnabled && rolesShown.length > 0 && (
+        <div className="absolute top-2 left-2 flex flex-wrap gap-1.5 pointer-events-none opacity-80">
+          {rolesShown.map((role) => (
+            <div
+              key={role}
+              className="flex items-center gap-1 rounded-full bg-black/60 backdrop-blur-sm px-2 py-0.5"
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: colorForRole(role) }}
+              />
+              <span className="text-[9px] font-semibold text-white tracking-wider">
+                {role}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* SVG overlay layer */}
       {dimensions.width > 0 && (
@@ -117,8 +166,9 @@ export function OverlayVideo({
             const cx = pos.x * dimensions.width;
             const cy = pos.y * dimensions.height;
             const r = isHighlighted ? 10 : 6;
-            const color = isHighlighted ? '#06b6d4' : '#ffffff';
-            const opacity = isHighlighted ? 1 : 0.65;
+            const baseColor = colorForRole(tr.role);
+            const color = isHighlighted ? '#06b6d4' : baseColor;
+            const opacity = isHighlighted ? 1 : 0.75;
             return (
               <g key={tr.trackId}>
                 <circle
@@ -141,13 +191,29 @@ export function OverlayVideo({
                   <text
                     x={cx}
                     y={cy + 3}
-                    fill={isHighlighted ? '#0a0e17' : '#0a0e17'}
+                    fill="#0a0e17"
                     fontSize="9"
                     fontWeight="bold"
                     textAnchor="middle"
                     style={{ fontFamily: 'system-ui, sans-serif' }}
                   >
                     {tr.jersey}
+                  </text>
+                )}
+                {tr.role && (
+                  <text
+                    x={cx}
+                    y={cy + r + 11}
+                    fill={color}
+                    fontSize="8"
+                    fontWeight="600"
+                    textAnchor="middle"
+                    style={{
+                      fontFamily: 'system-ui, sans-serif',
+                      filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.8))',
+                    }}
+                  >
+                    {tr.role}
                   </text>
                 )}
               </g>
