@@ -609,6 +609,108 @@ export function computeSituationalTendencies(plays: SituationalPlay[]): Situatio
   return result;
 }
 
+// ─── Personnel × play type tendencies ──────────────────────
+
+/**
+ * For each offensive personnel grouping (11, 12, 21, Empty, etc.), how
+ * do they call plays? If 12 personnel runs 75% of the time, a coach
+ * can load the box when they see 2 TEs.
+ */
+export interface PersonnelTendency {
+  /** Personnel label — "11", "12", "Empty", etc. */
+  personnel: string;
+  count: number;
+  passPct: number;
+  runPct: number;
+  /** Most common formation out of this personnel, if clear. */
+  dominantFormation?: { name: string; pct: number };
+  /** Average yards gained per play. */
+  avgYardsGained: number;
+  /** Explosive play rate (% of plays ≥ 10 yards). */
+  explosivePct: number;
+}
+
+interface PersonnelPlay {
+  personnel?: string | null;
+  formation?: string | null;
+  playType?: string | null;
+  gainLoss?: number | null;
+}
+
+/**
+ * Roll up plays by offensive personnel grouping. The coach learns
+ * "when they're in 12 personnel, it's 75% run" — enormously actionable
+ * because personnel is visible pre-snap (count the TEs and RBs).
+ *
+ * Filters:
+ *  - Personnel label must be present (skip plays with null personnel)
+ *  - Bucket must have ≥3 samples (noise floor)
+ *
+ * Ranked by tilt — personnel groupings with strong run/pass bias or
+ * above-average explosive rates surface first.
+ */
+export function aggregatePersonnelTendencies(plays: PersonnelPlay[]): PersonnelTendency[] {
+  type Bucket = { playTypes: string[]; formations: string[]; yards: number[] };
+  const buckets = new Map<string, Bucket>();
+
+  for (const p of plays) {
+    const personnel = p.personnel?.trim();
+    if (!personnel) continue;
+    let b = buckets.get(personnel);
+    if (!b) {
+      b = { playTypes: [], formations: [], yards: [] };
+      buckets.set(personnel, b);
+    }
+    if (p.playType) b.playTypes.push(p.playType);
+    if (p.formation) b.formations.push(p.formation);
+    if (typeof p.gainLoss === 'number') b.yards.push(p.gainLoss);
+  }
+
+  const avg = (a: number[]): number => (a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const dominant = (a: string[]): { name: string; pct: number } | undefined => {
+    if (a.length === 0) return undefined;
+    const counts = new Map<string, number>();
+    for (const v of a) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best: [string, number] | null = null;
+    for (const entry of counts) {
+      if (!best || entry[1] > best[1]) best = entry;
+    }
+    if (!best) return undefined;
+    return { name: best[0], pct: Math.round((best[1] / a.length) * 100) };
+  };
+
+  const result: PersonnelTendency[] = [];
+  for (const [personnel, b] of buckets) {
+    if (b.playTypes.length < 3) continue;
+    const passes = b.playTypes.filter((t) => /pass|screen|play action|rpo/i.test(t)).length;
+    const runs = b.playTypes.filter((t) => /run|qb run/i.test(t)).length;
+    const total = b.playTypes.length;
+    const explosives = b.yards.filter((y) => y >= 10).length;
+    result.push({
+      personnel,
+      count: total,
+      passPct: Math.round((passes / total) * 100),
+      runPct: Math.round((runs / total) * 100),
+      dominantFormation: dominant(b.formations),
+      avgYardsGained: Number(avg(b.yards).toFixed(1)),
+      explosivePct: b.yards.length > 0
+        ? Math.round((explosives / b.yards.length) * 100)
+        : 0,
+    });
+  }
+
+  // Rank by "tilt" — strong run/pass bias is a bigger coaching signal
+  // than 50/50 balance. Use max(passPct, runPct) as the tilt score,
+  // weighted by sample count (log so one huge bucket doesn't dominate).
+  result.sort((a, b) => {
+    const tiltA = Math.max(a.passPct, a.runPct) * Math.log1p(a.count);
+    const tiltB = Math.max(b.passPct, b.runPct) * Math.log1p(b.count);
+    return tiltB - tiltA;
+  });
+
+  return result.slice(0, 6);
+}
+
 // ─── Route concept × coverage heatmap ──────────────────────
 
 /**

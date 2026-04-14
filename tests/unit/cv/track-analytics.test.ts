@@ -13,6 +13,7 @@ import type { PlayerTrack, TrackPoint } from '@/lib/cv/player-tracker';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computePlayAnalytics,
   computeSituationalTendencies,
@@ -689,5 +690,84 @@ describe('aggregateRouteVsCoverage', () => {
     }
     const cells = aggregateRouteVsCoverage(plays);
     expect(cells.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('aggregatePersonnelTendencies', () => {
+  it('returns empty when no plays have personnel labels', () => {
+    expect(aggregatePersonnelTendencies([])).toEqual([]);
+    expect(
+      aggregatePersonnelTendencies([
+        { personnel: null, playType: 'Pass' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('drops personnel groupings with fewer than 3 plays', () => {
+    const plays = [
+      { personnel: '12', playType: 'Run' },
+      { personnel: '12', playType: 'Run' },
+    ];
+    expect(aggregatePersonnelTendencies(plays)).toEqual([]);
+  });
+
+  it('computes pass/run mix per personnel grouping', () => {
+    // 12 personnel: 4 runs, 1 pass → 20% pass / 80% run
+    const plays = [
+      { personnel: '12', playType: 'Run', gainLoss: 4 },
+      { personnel: '12', playType: 'Run', gainLoss: 3 },
+      { personnel: '12', playType: 'Run', gainLoss: 6 },
+      { personnel: '12', playType: 'Run', gainLoss: 2 },
+      { personnel: '12', playType: 'Pass', gainLoss: 12 },
+    ];
+    const tendencies = aggregatePersonnelTendencies(plays);
+    const twelve = tendencies.find((t) => t.personnel === '12');
+    expect(twelve).toBeDefined();
+    expect(twelve?.count).toBe(5);
+    expect(twelve?.passPct).toBe(20);
+    expect(twelve?.runPct).toBe(80);
+    expect(twelve?.avgYardsGained).toBeCloseTo(5.4, 1);
+    expect(twelve?.explosivePct).toBe(20); // 1 of 5 plays ≥10 yards
+  });
+
+  it('identifies dominant formation when it is at least 50% of snaps', () => {
+    const plays = [
+      { personnel: '11', formation: 'Trips Rt', playType: 'Pass' },
+      { personnel: '11', formation: 'Trips Rt', playType: 'Pass' },
+      { personnel: '11', formation: 'Trips Rt', playType: 'Pass' },
+      { personnel: '11', formation: 'Empty', playType: 'Pass' },
+    ];
+    const tendencies = aggregatePersonnelTendencies(plays);
+    expect(tendencies[0]?.dominantFormation?.name).toBe('Trips Rt');
+    expect(tendencies[0]?.dominantFormation?.pct).toBe(75);
+  });
+
+  it('ranks groupings with stronger run/pass tilt first', () => {
+    // 12 personnel: 100% run (strong tilt)
+    // 11 personnel: 50/50 (no tilt, though larger sample)
+    const plays = [
+      { personnel: '12', playType: 'Run' },
+      { personnel: '12', playType: 'Run' },
+      { personnel: '12', playType: 'Run' },
+      { personnel: '11', playType: 'Pass' },
+      { personnel: '11', playType: 'Pass' },
+      { personnel: '11', playType: 'Pass' },
+      { personnel: '11', playType: 'Run' },
+      { personnel: '11', playType: 'Run' },
+      { personnel: '11', playType: 'Run' },
+    ];
+    const tendencies = aggregatePersonnelTendencies(plays);
+    expect(tendencies[0]?.personnel).toBe('12');
+  });
+
+  it('caps output at 6 personnel groupings', () => {
+    const plays = [];
+    for (const pers of ['10', '11', '12', '13', '20', '21', '22', '23']) {
+      for (let i = 0; i < 4; i++) {
+        plays.push({ personnel: pers, playType: i % 2 === 0 ? 'Run' : 'Pass' });
+      }
+    }
+    const tendencies = aggregatePersonnelTendencies(plays);
+    expect(tendencies.length).toBeLessThanOrEqual(6);
   });
 });

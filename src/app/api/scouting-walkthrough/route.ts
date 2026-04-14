@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computeSituationalTendencies,
   type PlayAnalytics,
@@ -116,6 +117,11 @@ Rules:
     vs Cover 3 averaged 11 yds across 4 samples, that's a core Friday
     call — make it a recommendation. If Four Verts vs Cover 2 averaged
     -1 yd, DON'T recommend it.
+11. USE THE PERSONNEL HEADER. Personnel is VISIBLE pre-snap (count TEs
+    and RBs on the field). If they run 75% out of 12 personnel, tell
+    the coach "load the box when 12 comes on." If they pass 80% out of
+    11 personnel, tell the coach "expect pass — bring nickel." This is
+    the defense's play-calling tell every down.
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -147,6 +153,7 @@ export async function POST(req: Request): Promise<Response> {
           distance: plays.distance,
           quarter: plays.quarter,
           formation: plays.formation,
+          personnel: plays.personnel,
           playType: plays.playType,
           playDirection: plays.playDirection,
           gainLoss: plays.gainLoss,
@@ -244,6 +251,16 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Personnel tendencies: what do they do out of 11/12/21 etc.?
+    const personnelTendencies = aggregatePersonnelTendencies(
+      allPlays.map((p) => ({
+        personnel: p.personnel,
+        formation: p.formation,
+        playType: p.playType,
+        gainLoss: p.gainLoss,
+      })),
+    );
+
     // Route concept × coverage: which concepts beat which shells?
     const routeVsCoverage = aggregateRouteVsCoverage(
       allPlays.map((p) => ({
@@ -281,6 +298,16 @@ ${defenderTendencies.map((d) => {
 }).join('\n')}\n`
       : '';
 
+    const personnelHeader = personnelTendencies.length > 0
+      ? `\nPersonnel tendencies (what they call out of each grouping):
+${personnelTendencies.map((t) => {
+  const form = t.dominantFormation && t.dominantFormation.pct >= 50
+    ? `, ${t.dominantFormation.name} ${t.dominantFormation.pct}%`
+    : '';
+  return `  ${t.personnel} personnel (n=${t.count}): ${t.passPct}% pass / ${t.runPct}% run${form}, avg ${t.avgYardsGained}yd, explosive ${t.explosivePct}%`;
+}).join('\n')}\n`
+      : '';
+
     const routeCoverageHeader = routeVsCoverage.length > 0
       ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
 ${routeVsCoverage.map((c) => {
@@ -313,9 +340,9 @@ ${situations.map((s) => {
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}`
         : '';
 
-    // Route×coverage + situational headers work without field-space CV
-    // (they need only the analysis tags Claude already produces per play).
-    const analyticsHeader = `${cvHeader}${routeCoverageHeader}${situationalHeader}`;
+    // Route×coverage + situational + personnel headers work without
+    // field-space CV — they use only analysis tags Claude already produces.
+    const analyticsHeader = `${cvHeader}${personnelHeader}${routeCoverageHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
