@@ -226,6 +226,7 @@ export async function trackPlayersForOnePlay(
       clipBlobUrl,
       tracks: result.tracks.length,
       frames: result.frameCount,
+      jerseysRead: result.jerseysRead ?? 0,
       durationMs: result.durationMs,
     });
     return result.tracks;

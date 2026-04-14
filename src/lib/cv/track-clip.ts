@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { detectPeopleInFrames } from './player-detector';
 import { trackDetections, type PlayerTrack } from './player-tracker';
+import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +34,8 @@ export interface TrackClipOptions {
   confidence?: number;
   /** Roboflow API key override. */
   apiKey?: string;
+  /** Run jersey number OCR on tracks after tracking. Default true. */
+  readJerseys?: boolean;
 }
 
 export interface TrackClipResult {
@@ -42,6 +45,8 @@ export interface TrackClipResult {
   frameCount: number;
   /** Seconds taken to detect + track. */
   durationMs: number;
+  /** How many jerseys were successfully identified (if OCR ran). */
+  jerseysRead?: number;
 }
 
 /**
@@ -102,16 +107,40 @@ export async function trackPlayersInClip(
   });
 
   // Step 5: track
-  const tracks = trackDetections(detections);
+  let tracks = trackDetections(detections);
+
+  const imageWidth = detections[0]?.imageWidth ?? 640;
+  const imageHeight = detections[0]?.imageHeight ?? 360;
+
+  // Step 6: jersey OCR (optional but on by default)
+  let jerseysRead = 0;
+  if (opts.readJerseys !== false && tracks.length > 0) {
+    try {
+      const ocr = await ocrJerseysForTracks({
+        clipPath,
+        tracks,
+        frameWidth: imageWidth,
+        frameHeight: imageHeight,
+      });
+      tracks = applyJerseysToTracks(tracks, ocr.jerseys);
+      jerseysRead = ocr.jerseysRead;
+    } catch (err) {
+      // Jersey OCR is best-effort — a failure here should NOT kill tracking.
+      console.warn('jersey_ocr_failed', {
+        err: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      });
+    }
+  }
 
   // Cleanup
   await unlink(clipPath).catch(() => {});
 
   return {
     tracks,
-    imageWidth: detections[0]?.imageWidth ?? 640,
-    imageHeight: detections[0]?.imageHeight ?? 360,
+    imageWidth,
+    imageHeight,
     frameCount: frames.length,
     durationMs: Date.now() - startTime,
+    jerseysRead,
   };
 }
