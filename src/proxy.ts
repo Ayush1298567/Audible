@@ -23,6 +23,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/upload-video',
   '/api/analyze-video',
   '/api/analyze-video/status',
+  '/api/scouting-walkthrough',
   '/api/games',
   '/dev',
   '/_next(.*)',

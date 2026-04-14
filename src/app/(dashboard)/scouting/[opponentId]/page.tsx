@@ -5,6 +5,9 @@ import { useParams } from 'next/navigation';
 import { useProgram } from '@/lib/auth/program-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReportViewer } from '@/components/scouting/report-viewer';
+import { WalkthroughView } from '@/components/scouting/walkthrough';
+import { Button } from '@/components/ui/button';
+import type { Walkthrough } from '@/lib/scouting/insights';
 import type { TendencyBreakdown } from '@/lib/tendencies/queries';
 import type { DriveAnalysis } from '@/lib/tendencies/drive-analysis';
 import type { OpponentPlaybook } from '@/lib/tendencies/playbook-extraction';
@@ -30,6 +33,30 @@ export default function OpponentScoutingPage() {
   const [playbookData, setPlaybookData] = useState<OpponentPlaybook | null>(null);
   const [isPlaybookLoading, setIsPlaybookLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [walkthrough, setWalkthrough] = useState<Walkthrough | null>(null);
+  const [isBuildingWalkthrough, setIsBuildingWalkthrough] = useState(false);
+
+  async function openWalkthrough() {
+    if (!programId) return;
+    setIsBuildingWalkthrough(true);
+    try {
+      const res = await fetch('/api/scouting-walkthrough', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ programId, opponentId }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? 'Walkthrough generation failed');
+      }
+      const wt = await res.json();
+      setWalkthrough(wt);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to build walkthrough');
+    } finally {
+      setIsBuildingWalkthrough(false);
+    }
+  }
 
   const load = useCallback(async () => {
     if (!programId || !opponentId) return;
@@ -116,22 +143,51 @@ export default function OpponentScoutingPage() {
   return (
     <div className="relative space-y-6 gradient-mesh noise-overlay">
 
+      {walkthrough && (
+        <WalkthroughView walkthrough={walkthrough} onClose={() => setWalkthrough(null)} />
+      )}
+
       {/* Page header */}
-      <div className="animate-fade-in">
-        <p className="font-display text-xs uppercase tracking-widest text-blue-400 mb-1">
-          Opponent Analysis
-        </p>
-        <h1 className="font-display text-3xl font-bold tracking-tight text-white">
-          Opponent Scouting
-        </h1>
-        <div className="mt-2 flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="stat-number text-xl text-blue-400">{data.formation.sampleSize}</span>
-            <span className="text-xs text-slate-500">plays analyzed</span>
+      <div className="animate-fade-in flex items-start justify-between gap-4">
+        <div>
+          <p className="font-display text-xs uppercase tracking-widest text-blue-400 mb-1">
+            {opponentName || 'Opponent Analysis'}
+          </p>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-white">
+            Opponent Scouting
+          </h1>
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="stat-number text-xl text-blue-400">{data.formation.sampleSize}</span>
+              <span className="text-xs text-slate-500">plays analyzed</span>
+            </div>
+            <div className="h-4 w-px bg-slate-700/50" />
+            <ConfidenceBadge confidence={data.formation.confidence} />
           </div>
-          <div className="h-4 w-px bg-slate-700/50" />
-          <ConfidenceBadge confidence={data.formation.confidence} />
         </div>
+
+        <Button
+          onClick={openWalkthrough}
+          disabled={isBuildingWalkthrough || data.formation.sampleSize === 0}
+          className="shrink-0 h-11 px-5 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest"
+        >
+          {isBuildingWalkthrough ? (
+            <span className="flex items-center gap-2">
+              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Building walkthrough...
+            </span>
+          ) : (
+            <>
+              Walk me through this opponent
+              <svg className="ml-2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </>
+          )}
+        </Button>
       </div>
 
       {/* Gradient divider */}
