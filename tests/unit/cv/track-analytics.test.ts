@@ -14,6 +14,7 @@ import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
   aggregateMatchupsByOffense,
+  aggregateMotionTendencies,
   aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computePlayAnalytics,
@@ -840,5 +841,90 @@ describe('aggregateMatchupsByOffense', () => {
       { analytics: badRBPlay('2') },
     ]);
     expect(tendencies[0]?.jersey).toBe('88'); // WR #88 beats RB #22 on avgSep × count
+  });
+});
+
+describe('aggregateMotionTendencies', () => {
+  it('returns empty when no plays have motion labels', () => {
+    expect(aggregateMotionTendencies([])).toEqual([]);
+    expect(
+      aggregateMotionTendencies([
+        { motion: null, playType: 'Pass' },
+        { motion: 'None', playType: 'Run' },
+        { motion: 'none', playType: 'Run' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('filters out "None" motion labels (case-insensitive)', () => {
+    const plays = [
+      { motion: 'None', playType: 'Pass' },
+      { motion: 'NONE', playType: 'Pass' },
+      { motion: 'none', playType: 'Pass' },
+    ];
+    expect(aggregateMotionTendencies(plays)).toEqual([]);
+  });
+
+  it('drops motions with fewer than 2 samples (noise floor)', () => {
+    const plays = [
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right' },
+    ];
+    expect(aggregateMotionTendencies(plays)).toEqual([]);
+  });
+
+  it('computes pass/run mix per motion label', () => {
+    const plays = [
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right', gainLoss: 5 },
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right', gainLoss: 8 },
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right', gainLoss: 12 },
+      { motion: 'jet right', playType: 'Pass', playDirection: 'Right', gainLoss: 10 },
+    ];
+    const tendencies = aggregateMotionTendencies(plays);
+    expect(tendencies).toHaveLength(1);
+    expect(tendencies[0]?.motion).toBe('jet right');
+    expect(tendencies[0]?.count).toBe(4);
+    expect(tendencies[0]?.runPct).toBe(75);
+    expect(tendencies[0]?.passPct).toBe(25);
+    // The aggregator rounds to 1 decimal, so 8.75 → 8.8 after toFixed(1).
+    expect(tendencies[0]?.avgYardsGained).toBe(8.8);
+    expect(tendencies[0]?.explosivePct).toBe(50); // 2 of 4 plays ≥10 yards
+  });
+
+  it('identifies dominant direction at 60%+ threshold', () => {
+    const plays = [
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right' },
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right' },
+      { motion: 'jet right', playType: 'Run', playDirection: 'Right' },
+      { motion: 'jet right', playType: 'Run', playDirection: 'Left' },
+    ];
+    const tendencies = aggregateMotionTendencies(plays);
+    expect(tendencies[0]?.dominantDirection?.name).toBe('Right');
+    expect(tendencies[0]?.dominantDirection?.pct).toBe(75);
+  });
+
+  it('ranks motions with stronger tilt first', () => {
+    // "jet right": 3 plays, 100% run (strong tilt)
+    // "WR across": 3 plays, 50/50 run/pass (no tilt)
+    const plays = [
+      { motion: 'jet right', playType: 'Run' },
+      { motion: 'jet right', playType: 'Run' },
+      { motion: 'jet right', playType: 'Run' },
+      { motion: 'WR across', playType: 'Run' },
+      { motion: 'WR across', playType: 'Run' },
+      { motion: 'WR across', playType: 'Pass' },
+      { motion: 'WR across', playType: 'Pass' },
+    ];
+    const tendencies = aggregateMotionTendencies(plays);
+    expect(tendencies[0]?.motion).toBe('jet right');
+  });
+
+  it('caps output at 6 motion labels', () => {
+    const plays = [];
+    for (const m of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+      plays.push({ motion: m, playType: 'Run' });
+      plays.push({ motion: m, playType: 'Run' });
+    }
+    const tendencies = aggregateMotionTendencies(plays);
+    expect(tendencies.length).toBeLessThanOrEqual(6);
   });
 });

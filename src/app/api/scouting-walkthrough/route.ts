@@ -5,6 +5,7 @@ import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
   aggregateMatchupsByOffense,
+  aggregateMotionTendencies,
   aggregatePersonnelTendencies,
   aggregateRouteVsCoverage,
   computeSituationalTendencies,
@@ -126,6 +127,11 @@ Rules:
     the coach "load the box when 12 comes on." If they pass 80% out of
     11 personnel, tell the coach "expect pass — bring nickel." This is
     the defense's play-calling tell every down.
+12. USE THE MOTION-TELLS HEADER. Pre-snap motion is a live football
+    signal the defense can READ and react to in real time. "Jet motion
+    right → run jet right 70%" is a tell the coach tells LBs "match
+    jet." Flag any motion-to-direction pattern ≥60% as a bullet the
+    coach should coach during the week.
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -158,6 +164,7 @@ export async function POST(req: Request): Promise<Response> {
           quarter: plays.quarter,
           formation: plays.formation,
           personnel: plays.personnel,
+          motion: plays.motion,
           playType: plays.playType,
           playDirection: plays.playDirection,
           gainLoss: plays.gainLoss,
@@ -255,6 +262,16 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Motion tendencies: pre-snap motion → play direction / type tells.
+    const motionTendencies = aggregateMotionTendencies(
+      allPlays.map((p) => ({
+        motion: p.motion,
+        playType: p.playType,
+        playDirection: p.playDirection,
+        gainLoss: p.gainLoss,
+      })),
+    );
+
     // Personnel tendencies: what do they do out of 11/12/21 etc.?
     const personnelTendencies = aggregatePersonnelTendencies(
       allPlays.map((p) => ({
@@ -322,6 +339,16 @@ ${personnelTendencies.map((t) => {
 }).join('\n')}\n`
       : '';
 
+    const motionHeader = motionTendencies.length > 0
+      ? `\nMotion tells (pre-snap motion → what happens):
+${motionTendencies.map((m) => {
+  const dir = m.dominantDirection && m.dominantDirection.pct >= 60
+    ? `, ${m.dominantDirection.name} ${m.dominantDirection.pct}%`
+    : '';
+  return `  "${m.motion}" (n=${m.count}): ${m.passPct}% pass / ${m.runPct}% run${dir}, avg ${m.avgYardsGained}yd`;
+}).join('\n')}\n`
+      : '';
+
     const routeCoverageHeader = routeVsCoverage.length > 0
       ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
 ${routeVsCoverage.map((c) => {
@@ -354,9 +381,10 @@ ${situations.map((s) => {
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}${offenseHeader}`
         : '';
 
-    // Route×coverage + situational + personnel headers work without
-    // field-space CV — they use only analysis tags Claude already produces.
-    const analyticsHeader = `${cvHeader}${personnelHeader}${routeCoverageHeader}${situationalHeader}`;
+    // Route×coverage + situational + personnel + motion headers work
+    // without field-space CV — they use only analysis tags Claude
+    // already produces per play.
+    const analyticsHeader = `${cvHeader}${personnelHeader}${motionHeader}${routeCoverageHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({

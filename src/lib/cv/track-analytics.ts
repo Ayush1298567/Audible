@@ -801,6 +801,103 @@ export function aggregateRouteVsCoverage(plays: RouteCovPlay[]): RouteVsCoverage
   return cells.slice(0, 8);
 }
 
+// ─── Motion tendencies ──────────────────────────────────────
+
+export interface MotionTendency {
+  /** Motion label — "jet right", "WR across", etc. */
+  motion: string;
+  count: number;
+  passPct: number;
+  runPct: number;
+  avgYardsGained: number;
+  explosivePct: number;
+  /** Dominant play direction following this motion (Left/Right/Middle). */
+  dominantDirection?: { name: string; pct: number };
+}
+
+interface MotionPlay {
+  motion?: string | null;
+  playType?: string | null;
+  playDirection?: string | null;
+  gainLoss?: number | null;
+}
+
+/**
+ * Motion is an enormous pre-snap tell. "When they motion jet right,
+ * they run jet sweep right 60% of the time" is a game-plannable tendency.
+ *
+ * Uses a VERY permissive definition of "motion" — any motion label that
+ * isn't "None"/"none"/empty gets its own bucket. In a real season this
+ * would grow unwieldy (each play's motion phrased slightly differently);
+ * here we lean on the AI analyzer to produce consistent labels.
+ *
+ * Filters:
+ *  - Motion label present and not "None" (case-insensitive)
+ *  - ≥2 samples per bucket (noise floor is tight here because motion
+ *    labels are high-variance; 3 would filter most real tendencies)
+ *
+ * Ranked by tilt (max pass/run %) × log1p(count). Capped at 6.
+ */
+export function aggregateMotionTendencies(plays: MotionPlay[]): MotionTendency[] {
+  type Bucket = { playTypes: string[]; directions: string[]; yards: number[] };
+  const buckets = new Map<string, Bucket>();
+
+  for (const p of plays) {
+    const motion = p.motion?.trim();
+    if (!motion) continue;
+    if (/^none$/i.test(motion)) continue;
+    let b = buckets.get(motion);
+    if (!b) {
+      b = { playTypes: [], directions: [], yards: [] };
+      buckets.set(motion, b);
+    }
+    if (p.playType) b.playTypes.push(p.playType);
+    if (p.playDirection) b.directions.push(p.playDirection);
+    if (typeof p.gainLoss === 'number') b.yards.push(p.gainLoss);
+  }
+
+  const avg = (a: number[]): number => (a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const dominant = (a: string[]): { name: string; pct: number } | undefined => {
+    if (a.length === 0) return undefined;
+    const counts = new Map<string, number>();
+    for (const v of a) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best: [string, number] | null = null;
+    for (const entry of counts) {
+      if (!best || entry[1] > best[1]) best = entry;
+    }
+    if (!best) return undefined;
+    return { name: best[0], pct: Math.round((best[1] / a.length) * 100) };
+  };
+
+  const result: MotionTendency[] = [];
+  for (const [motion, b] of buckets) {
+    if (b.playTypes.length < 2) continue;
+    const passes = b.playTypes.filter((t) => /pass|screen|play action|rpo/i.test(t)).length;
+    const runs = b.playTypes.filter((t) => /run|qb run/i.test(t)).length;
+    const total = b.playTypes.length;
+    const explosives = b.yards.filter((y) => y >= 10).length;
+    result.push({
+      motion,
+      count: total,
+      passPct: Math.round((passes / total) * 100),
+      runPct: Math.round((runs / total) * 100),
+      avgYardsGained: Number(avg(b.yards).toFixed(1)),
+      explosivePct: b.yards.length > 0
+        ? Math.round((explosives / b.yards.length) * 100)
+        : 0,
+      dominantDirection: dominant(b.directions),
+    });
+  }
+
+  result.sort((a, b) => {
+    const tiltA = Math.max(a.passPct, a.runPct) * Math.log1p(a.count);
+    const tiltB = Math.max(b.passPct, b.runPct) * Math.log1p(b.count);
+    return tiltB - tiltA;
+  });
+
+  return result.slice(0, 6);
+}
+
 // ─── Opponent-level matchup aggregation ─────────────────────
 
 /**
