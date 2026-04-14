@@ -13,6 +13,7 @@ import type { PlayerTrack, TrackPoint } from '@/lib/cv/player-tracker';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregateRouteVsCoverage,
   computePlayAnalytics,
   computeSituationalTendencies,
   minSeparation,
@@ -597,5 +598,96 @@ describe('computeSituationalTendencies', () => {
     ];
     const buckets = computeSituationalTendencies(plays);
     expect(buckets[0]?.situation.startsWith('3rd')).toBe(true);
+  });
+});
+
+describe('aggregateRouteVsCoverage', () => {
+  it('returns empty when no pass plays have both route and coverage', () => {
+    expect(aggregateRouteVsCoverage([])).toEqual([]);
+    expect(
+      aggregateRouteVsCoverage([
+        { playType: 'Run', route: 'mesh', coverage: 'cover_3', gainLoss: 5 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('ignores unknown / N/A routes and coverages', () => {
+    const plays = [
+      { playType: 'Pass', route: 'unknown', coverage: 'cover_3', gainLoss: 12 },
+      { playType: 'Pass', route: 'mesh', coverage: 'unknown', gainLoss: 12 },
+      { playType: 'Pass', route: 'N/A', coverage: 'cover_3', gainLoss: 10 },
+      { playType: 'Pass', route: 'scramble', coverage: 'cover_3', gainLoss: 8 },
+    ];
+    expect(aggregateRouteVsCoverage(plays)).toEqual([]);
+  });
+
+  it('requires ≥2 samples per cell (noise floor)', () => {
+    // One mesh-vs-cover-3 play → filtered
+    const plays = [
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 12 },
+    ];
+    expect(aggregateRouteVsCoverage(plays)).toEqual([]);
+  });
+
+  it('computes avg, best, and explosive rate per cell', () => {
+    // mesh vs cover_3: 4 plays at 12, 8, 15, 5 → avg 10, best 15, explosive 50% (2 of 4 ≥10)
+    const plays = [
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 12 },
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 8 },
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 15 },
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 5 },
+    ];
+    const cells = aggregateRouteVsCoverage(plays);
+    expect(cells).toHaveLength(1);
+    expect(cells[0]?.routeConcept).toBe('mesh');
+    expect(cells[0]?.coverage).toBe('cover_3');
+    expect(cells[0]?.count).toBe(4);
+    expect(cells[0]?.avgYards).toBeCloseTo(10, 1);
+    expect(cells[0]?.bestYards).toBe(15);
+    expect(cells[0]?.explosivePct).toBe(50);
+  });
+
+  it('ranks cells by avgYards descending', () => {
+    const plays = [
+      // mesh vs cover_3: avg 4
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 3 },
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 5 },
+      // four_verts vs cover_2: avg 12
+      { playType: 'Pass', route: 'four_verts', coverage: 'cover_2', gainLoss: 12 },
+      { playType: 'Pass', route: 'four_verts', coverage: 'cover_2', gainLoss: 12 },
+    ];
+    const cells = aggregateRouteVsCoverage(plays);
+    expect(cells[0]?.routeConcept).toBe('four_verts');
+    expect(cells[1]?.routeConcept).toBe('mesh');
+  });
+
+  it('treats Pass, Screen, Play Action, and RPO as pass plays', () => {
+    const plays = [
+      { playType: 'Pass', route: 'mesh', coverage: 'cover_3', gainLoss: 10 },
+      { playType: 'Screen', route: 'mesh', coverage: 'cover_3', gainLoss: 10 },
+      { playType: 'Play Action', route: 'mesh', coverage: 'cover_3', gainLoss: 10 },
+      { playType: 'RPO', route: 'mesh', coverage: 'cover_3', gainLoss: 10 },
+      // Run should not contribute
+      { playType: 'Run', route: 'mesh', coverage: 'cover_3', gainLoss: 999 },
+    ];
+    const cells = aggregateRouteVsCoverage(plays);
+    expect(cells).toHaveLength(1);
+    expect(cells[0]?.count).toBe(4);
+    expect(cells[0]?.avgYards).toBeCloseTo(10, 1);
+  });
+
+  it('caps output at 8 cells', () => {
+    // Generate 12 distinct (route, coverage) cells, each with 2 samples
+    const routes = ['mesh', 'levels', 'flood', 'stick', 'slant_flat', 'four_verts'];
+    const coverages = ['cover_2', 'cover_3'];
+    const plays = [];
+    for (const r of routes) {
+      for (const c of coverages) {
+        plays.push({ playType: 'Pass', route: r, coverage: c, gainLoss: 8 });
+        plays.push({ playType: 'Pass', route: r, coverage: c, gainLoss: 10 });
+      }
+    }
+    const cells = aggregateRouteVsCoverage(plays);
+    expect(cells.length).toBeLessThanOrEqual(8);
   });
 });

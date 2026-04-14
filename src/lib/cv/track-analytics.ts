@@ -609,6 +609,96 @@ export function computeSituationalTendencies(plays: SituationalPlay[]): Situatio
   return result;
 }
 
+// ─── Route concept × coverage heatmap ──────────────────────
+
+/**
+ * For each (route concept, coverage shell) pair, compute how the
+ * offense has historically performed. This is the most actionable
+ * number a coach sees: "Mesh vs their Cover 3 → 12 yds avg, 3/5 plays
+ * 10+" is a game-planable answer.
+ */
+export interface RouteVsCoverageCell {
+  routeConcept: string;
+  coverage: string;
+  count: number;
+  avgYards: number;
+  /** Plays that gained 10+ yards. */
+  explosivePct: number;
+  /** Best single result in this pair (max gain). */
+  bestYards: number;
+}
+
+interface RouteCovPlay {
+  playType?: string | null;
+  route?: string;
+  coverage?: string;
+  gainLoss?: number | null;
+}
+
+const IGNORED_ROUTE_VALUES = new Set(['', 'unknown', 'n/a', 'N/A', 'scramble']);
+const IGNORED_COVERAGE_VALUES = new Set(['', 'unknown']);
+
+/**
+ * Roll up pass-play outcomes by (route concept, coverage shell).
+ *
+ * Filters:
+ *  - Must be a pass play (we pass through playType filter)
+ *  - Route and coverage must both be known (not "unknown" / "N/A")
+ *  - Cell must have ≥2 samples — one result is not a tendency
+ *
+ * Ranked by avgYards descending — most productive pairs surface first.
+ * Capped at 8 cells so the prompt stays lean.
+ */
+export function aggregateRouteVsCoverage(plays: RouteCovPlay[]): RouteVsCoverageCell[] {
+  type Bucket = { yards: number[]; best: number; explosives: number };
+  const buckets = new Map<string, Bucket>();
+
+  for (const p of plays) {
+    if (!p.playType || !/pass|screen|play action|rpo/i.test(p.playType)) continue;
+    const route = p.route?.trim();
+    const cov = p.coverage?.trim();
+    if (!route || IGNORED_ROUTE_VALUES.has(route)) continue;
+    if (!cov || IGNORED_COVERAGE_VALUES.has(cov)) continue;
+
+    const y = typeof p.gainLoss === 'number' ? p.gainLoss : 0;
+    const key = `${route}__${cov}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { yards: [], best: -Infinity, explosives: 0 };
+      buckets.set(key, b);
+    }
+    b.yards.push(y);
+    if (y > b.best) b.best = y;
+    if (y >= 10) b.explosives++;
+  }
+
+  const cells: RouteVsCoverageCell[] = [];
+  for (const [key, b] of buckets) {
+    if (b.yards.length < 2) continue;
+    const parts = key.split('__');
+    if (parts.length !== 2) continue;
+    const [routeConcept, coverage] = parts;
+    if (!routeConcept || !coverage) continue;
+    const avg = b.yards.reduce((s, v) => s + v, 0) / b.yards.length;
+    cells.push({
+      routeConcept,
+      coverage,
+      count: b.yards.length,
+      avgYards: Number(avg.toFixed(1)),
+      explosivePct: Math.round((b.explosives / b.yards.length) * 100),
+      bestYards: b.best === -Infinity ? 0 : b.best,
+    });
+  }
+
+  // Sort by avg yards descending, then by count (tiebreak: more samples first).
+  cells.sort((a, b) => {
+    if (a.avgYards !== b.avgYards) return b.avgYards - a.avgYards;
+    return b.count - a.count;
+  });
+
+  return cells.slice(0, 8);
+}
+
 // ─── Opponent-level matchup aggregation ─────────────────────
 
 /**

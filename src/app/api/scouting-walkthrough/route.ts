@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  aggregateRouteVsCoverage,
   computeSituationalTendencies,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
@@ -110,6 +111,11 @@ Rules:
    40%+ rotation rates, or strong coverage tendencies by down. Tie
    these to concrete calls ("on 3rd & long they rotate to Cover 3 60%
    of the time — call post-wheel with a late-over tag").
+10. USE THE ROUTE×COVERAGE HEATMAP. It tells you which concepts have
+    historically BEAT which coverages in this opponent's film. If Mesh
+    vs Cover 3 averaged 11 yds across 4 samples, that's a core Friday
+    call — make it a recommendation. If Four Verts vs Cover 2 averaged
+    -1 yd, DON'T recommend it.
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -238,6 +244,16 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Route concept × coverage: which concepts beat which shells?
+    const routeVsCoverage = aggregateRouteVsCoverage(
+      allPlays.map((p) => ({
+        playType: p.playType,
+        route: (p.coachOverride as { aiRouteConcept?: string })?.aiRouteConcept,
+        coverage: (p.coachOverride as { aiCoverage?: string })?.aiCoverage,
+        gainLoss: p.gainLoss,
+      })),
+    );
+
     // Situational tendencies: how do they play by down & distance?
     const situations = computeSituationalTendencies(
       allPlays.map((p) => ({
@@ -262,6 +278,13 @@ export async function POST(req: Request): Promise<Response> {
 ${defenderTendencies.map((d) => {
   const name = d.jersey ? `${d.role} #${d.jersey}` : `${d.role} (jersey unreadable)`;
   return `  ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
+}).join('\n')}\n`
+      : '';
+
+    const routeCoverageHeader = routeVsCoverage.length > 0
+      ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
+${routeVsCoverage.map((c) => {
+  return `  ${c.routeConcept} vs ${c.coverage}: ${c.count} plays, avg ${c.avgYards}yd, best ${c.bestYards}yd, explosive ${c.explosivePct}%`;
 }).join('\n')}\n`
       : '';
 
@@ -290,8 +313,9 @@ ${situations.map((s) => {
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}`
         : '';
 
-    // Situational header works without field-space CV (needs only analysis tags).
-    const analyticsHeader = `${cvHeader}${situationalHeader}`;
+    // Route×coverage + situational headers work without field-space CV
+    // (they need only the analysis tags Claude already produces per play).
+    const analyticsHeader = `${cvHeader}${routeCoverageHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
