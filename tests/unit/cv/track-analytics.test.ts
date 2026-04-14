@@ -776,6 +776,141 @@ describe('aggregatePersonnelTendencies', () => {
   });
 });
 
+describe('matchup confidence + trust tiers', () => {
+  // Helper that builds a track with explicit confidence fields.
+  const namedTrack = (
+    id: string,
+    role: string,
+    points: Array<[number, number, number]>,
+    opts: {
+      jersey?: string;
+      trackQuality?: number;
+      roleConfidence?: number;
+      jerseyConfidence?: number;
+    } = {},
+  ): PlayerTrack => ({
+    trackId: id,
+    role,
+    jersey: opts.jersey,
+    trackQuality: opts.trackQuality,
+    roleConfidence: opts.roleConfidence,
+    jerseyConfidence: opts.jerseyConfidence,
+    points: points.map(([t, fx, fy]): TrackPoint => ({
+      t, x: 0.5, y: 0.5, w: 0.1, h: 0.2, confidence: 0.9, fx, fy,
+    })),
+  });
+
+  it('drops matchups whose joint confidence is below 0.4', () => {
+    // Both tracks with very low quality → joint confidence ≈ 0.04 → dropped
+    const lowConfPlay = computePlayAnalytics([
+      namedTrack('wr', 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.2, roleConfidence: 0.5, jerseyConfidence: 0.5,
+      }),
+      namedTrack('cb', 'CB', [[0, 33, 5], [2, 53, 5]], {
+        jersey: '24', trackQuality: 0.2, roleConfidence: 0.5, jerseyConfidence: 0.5,
+      }),
+    ]);
+    // Per-play matchups still compute (they're just measurements);
+    // it's the AGGREGATOR that drops anything < 0.4 confidence.
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: lowConfPlay },
+      { analytics: lowConfPlay },
+      { analytics: lowConfPlay },
+    ]);
+    expect(tendencies).toEqual([]);
+  });
+
+  it('marks defenders trust=high only with ≥4 matchups AND mean conf ≥0.7', () => {
+    // 4 plays with high confidence everywhere → trust = high
+    const highConfPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.9,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.9,
+      }),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: highConfPlay('1') },
+      { analytics: highConfPlay('2') },
+      { analytics: highConfPlay('3') },
+      { analytics: highConfPlay('4') },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.trust).toBe('high');
+    expect(cb24?.meanConfidence).toBeGreaterThanOrEqual(0.7);
+    expect(cb24?.matchupCount).toBe(4);
+  });
+
+  it('marks defenders trust=medium with 3 plays at medium confidence', () => {
+    const medConfPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.7, roleConfidence: 0.8, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.7, roleConfidence: 0.8, jerseyConfidence: 0.95,
+      }),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: medConfPlay('1') },
+      { analytics: medConfPlay('2') },
+      { analytics: medConfPlay('3') },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.trust).toBe('medium');
+    expect(cb24?.matchupCount).toBe(3);
+  });
+
+  it('marks 2-play tendencies as trust=low regardless of confidence', () => {
+    const play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: play('1') },
+      { analytics: play('2') },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.trust).toBe('low');
+  });
+
+  it('ranks high-trust signals ahead of low-trust ones with bigger raw numbers', () => {
+    // CB #24: 4 high-conf plays, modest 3yd avg sep
+    const trustedPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 33, 5], [2, 53, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+    // CB #99: 2 plays at the same high conf but huge sep (5yd)
+    const lowTrustBigNumber = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 26], [2, 50, 26]], {
+        jersey: '7', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 35, 26], [2, 55, 26]], {
+        jersey: '99', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: trustedPlay('1') },
+      { analytics: trustedPlay('2') },
+      { analytics: trustedPlay('3') },
+      { analytics: trustedPlay('4') },
+      { analytics: lowTrustBigNumber('1') },
+      { analytics: lowTrustBigNumber('2') },
+    ]);
+    // Despite #99's bigger raw number, #24's high trust should rank first.
+    expect(tendencies[0]?.jersey).toBe('24');
+  });
+});
+
 describe('aggregateMatchupsByOffense', () => {
   const roleTrack = (
     id: string,

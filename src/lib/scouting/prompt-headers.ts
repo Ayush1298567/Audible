@@ -24,18 +24,23 @@ export function buildDefenderHeader(defenders: DefenderTendency[]): string {
   if (defenders.length === 0) return '';
   const rows = defenders.map((d) => {
     const name = d.jersey ? `${d.role} #${d.jersey}` : `${d.role} (jersey unreadable)`;
-    return `  ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
+    return `  [trust=${d.trust}, conf=${d.meanConfidence}] ${name}: ${d.matchupCount} matchups, avg sep ${d.avgSeparationYards}yd, worst ${d.worstSeparationYards}yd, avg closing ${d.avgClosingYps} yds/s`;
   });
-  return `\nDefender tendencies (most-exploited first, from matchup data):\n${rows.join('\n')}\n`;
+  return `\nDefender tendencies (most-exploited first, from matchup data):
+  Trust legend: high = cite by name; medium = cite as a pattern; low = DO NOT cite.
+  Anonymous (jersey unreadable) tendencies should never be cited as a specific player.
+${rows.join('\n')}\n`;
 }
 
 export function buildOffenseHeader(offense: OffensiveTendency[]): string {
   if (offense.length === 0) return '';
   const rows = offense.map((o) => {
     const name = o.jersey ? `${o.role} #${o.jersey}` : `${o.role} (jersey unreadable)`;
-    return `  ${name}: ${o.matchupCount} snaps, avg sep ${o.avgSeparationYards}yd, best ${o.bestSeparationYards}yd, avg peak speed ${o.avgMaxSpeedYps} yds/s`;
+    return `  [trust=${o.trust}, conf=${o.meanConfidence}] ${name}: ${o.matchupCount} snaps, avg sep ${o.avgSeparationYards}yd, best ${o.bestSeparationYards}yd, avg peak speed ${o.avgMaxSpeedYps} yds/s`;
   });
-  return `\nOffensive playmakers (their threats, sorted by consistency of separation):\n${rows.join('\n')}\n`;
+  return `\nOffensive playmakers (their threats, sorted by consistency of separation):
+  Same trust rules as defenders apply.
+${rows.join('\n')}\n`;
 }
 
 export function buildPersonnelHeader(personnel: PersonnelTendency[]): string {

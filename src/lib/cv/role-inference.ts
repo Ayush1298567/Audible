@@ -24,7 +24,7 @@
 
 import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
-import type { PlayerTrack } from './player-tracker';
+import { type PlayerTrack, TRACK_TRUST_THRESHOLD } from './player-tracker';
 
 const ROLE_MODEL = 'anthropic/claude-sonnet-4.6';
 
@@ -159,6 +159,8 @@ WR streaking 40 yds downfield at 9 yds/s? 0.95.`;
 
 export interface RoleInferenceResult {
   roles: Record<string, Role>;
+  /** Per-track Claude confidence in the role assignment (0-1). */
+  roleConfidences: Record<string, number>;
   assigned: number;
   attempted: number;
 }
@@ -175,14 +177,31 @@ export async function inferTrackRoles(args: {
   formation?: string;
   coverage?: string;
 }): Promise<RoleInferenceResult> {
-  const MIN_CONFIDENCE = 0.45;
+  // Bumped from 0.45 → 0.6. The role drives the matchup pairing
+  // (offense skill ↔ closest defender), and a wrong role at 0.5 confidence
+  // sends a CB into the offensive bucket and a WR into the defensive
+  // bucket — the resulting "tendency" is wholly fabricated.
+  const MIN_CONFIDENCE = 0.6;
 
-  const features = args.tracks
+  // Filter low-quality tracks BEFORE running the inference. A noisy 5-frame
+  // track sliding diagonally across the field can look like "WR running a
+  // post" to feature-only inference even if the underlying detection was a
+  // ghost. Cheaper to drop here than to argue with downstream aggregators.
+  const trustedTracks = args.tracks.filter(
+    (t) => (t.trackQuality ?? 0) >= TRACK_TRUST_THRESHOLD,
+  );
+
+  const features = trustedTracks
     .map((t) => extractFeatures(t))
     .filter((f): f is TrackFeatures => f !== null);
 
   if (features.length === 0) {
-    return { roles: {}, assigned: 0, attempted: args.tracks.length };
+    return {
+      roles: {},
+      roleConfidences: {},
+      assigned: 0,
+      attempted: args.tracks.length,
+    };
   }
 
   const context = [
@@ -219,18 +238,21 @@ export async function inferTrackRoles(args: {
   }
 
   if (!parsed) {
-    return { roles: {}, assigned: 0, attempted: features.length };
+    return { roles: {}, roleConfidences: {}, assigned: 0, attempted: features.length };
   }
 
   const roles: Record<string, Role> = {};
+  const roleConfidences: Record<string, number> = {};
   for (const a of parsed.assignments) {
     if (a.confidence < MIN_CONFIDENCE) continue;
     if (a.role === 'UNKNOWN') continue;
     roles[a.trackId] = a.role;
+    roleConfidences[a.trackId] = a.confidence;
   }
 
   return {
     roles,
+    roleConfidences,
     assigned: Object.keys(roles).length,
     attempted: features.length,
   };
@@ -242,9 +264,15 @@ export async function inferTrackRoles(args: {
 export function applyRolesToTracks(
   tracks: PlayerTrack[],
   roles: Record<string, Role>,
+  confidences: Record<string, number> = {},
 ): PlayerTrack[] {
   return tracks.map((t) => {
     const r = roles[t.trackId];
-    return r ? { ...t, role: r } : t;
+    if (!r) return t;
+    return {
+      ...t,
+      role: r,
+      roleConfidence: confidences[t.trackId],
+    };
   });
 }

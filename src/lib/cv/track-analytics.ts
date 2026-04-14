@@ -73,6 +73,13 @@ export interface KeyMatchup {
   closingYps: number;
   /** Max speed the offense player hit during the play. */
   offenseMaxSpeedYps: number;
+  /**
+   * Joint confidence (0-1). Combines track quality + role inference
+   * confidence + jersey OCR confidence for both players. Below 0.5 the
+   * matchup should NOT be cited as a player-specific tendency — only
+   * aggregated as anonymous role-vs-role evidence.
+   */
+  confidence: number;
 }
 
 export interface PlayAnalytics {
@@ -344,6 +351,25 @@ function computeKeyMatchups(
     }
     if (!best?.sep) continue;
 
+    // Joint matchup confidence — combine all the things that could go wrong:
+    // either track being noisy, either role being mis-inferred, either jersey
+    // being mis-read. A matchup is only as trustworthy as its weakest link.
+    //
+    // Convention: an UNSET field is treated as "no penalty" (defaults to 1).
+    // The signal of low confidence has to be EXPLICIT — that way callers that
+    // don't bother to set trackQuality (legacy paths, tests, scenarios where
+    // we don't have the data) aren't punished. In production, the pipeline
+    // sets all three explicitly so penalties propagate as designed.
+    const offConf =
+      (off.trackQuality ?? 1) *
+      (off.roleConfidence ?? 1) *
+      (off.jerseyConfidence ?? 1);
+    const defConf =
+      (best.d.trackQuality ?? 1) *
+      (best.d.roleConfidence ?? 1) *
+      (best.d.jerseyConfidence ?? 1);
+    const matchupConfidence = Number(Math.min(offConf, defConf).toFixed(2));
+
     matchups.push({
       offense: { trackId: off.trackId, role: off.role ?? 'UNKNOWN', jersey: off.jersey },
       defense: { trackId: best.d.trackId, role: best.d.role ?? 'UNKNOWN', jersey: best.d.jersey },
@@ -351,6 +377,7 @@ function computeKeyMatchups(
       atT: Number(best.sep.atT.toFixed(2)),
       closingYps: Number(best.sep.closingYps.toFixed(1)),
       offenseMaxSpeedYps: Number((statMap.get(off.trackId)?.maxSpeedYps ?? 0).toFixed(1)),
+      confidence: matchupConfidence,
     });
   }
 
@@ -1092,6 +1119,18 @@ export interface DefenderTendency {
   avgOffenseSpeedYps: number;
   /** Track IDs for every play this defender showed up in (for evidence clips). */
   trackIds: string[];
+  /**
+   * Mean per-matchup joint confidence. Combined with sample size, this is
+   * the "should the coach actually believe this number" score.
+   */
+  meanConfidence: number;
+  /**
+   * Coarse trust tier derived from confidence × sample size:
+   *   high   — ≥4 matchups AND mean conf ≥0.7  → cite this player by name
+   *   medium — ≥3 matchups AND mean conf ≥0.5  → mention as a pattern
+   *   low    — anything else                   → don't cite as a tendency
+   */
+  trust: 'high' | 'medium' | 'low';
 }
 
 /**
@@ -1112,6 +1151,10 @@ export interface OffensiveTendency {
   avgSeparationYards: number;
   /** Track IDs (one per play). */
   trackIds: string[];
+  /** Mean joint confidence across the contributing matchups (0-1). */
+  meanConfidence: number;
+  /** Trust tier: high (cite by name) / medium (mention) / low (don't cite). */
+  trust: 'high' | 'medium' | 'low';
 }
 
 export function aggregateMatchupsByOffense(
@@ -1123,6 +1166,7 @@ export function aggregateMatchupsByOffense(
     speeds: number[];
     seps: number[];
     trackIds: string[];
+    confidences: number[];
   };
 
   const buckets = new Map<string, Bucket>();
@@ -1130,7 +1174,14 @@ export function aggregateMatchupsByOffense(
   for (const p of plays) {
     if (!p.analytics?.keyMatchups) continue;
     for (const m of p.analytics.keyMatchups) {
-      const key = `${m.offense.role}#${m.offense.jersey ?? 'unknown'}`;
+      // Same threshold + bucketing rules as the defender side — see
+      // aggregateMatchupsByDefender for the rationale.
+      if (m.confidence < 0.4) continue;
+      const useJersey = m.offense.jersey !== undefined;
+      const key = useJersey
+        ? `${m.offense.role}#${m.offense.jersey}`
+        : `${m.offense.role}#anon`;
+
       let b = buckets.get(key);
       if (!b) {
         b = {
@@ -1139,12 +1190,14 @@ export function aggregateMatchupsByOffense(
           speeds: [],
           seps: [],
           trackIds: [],
+          confidences: [],
         };
         buckets.set(key, b);
       }
       b.speeds.push(m.offenseMaxSpeedYps);
       b.seps.push(m.minSeparationYards);
       b.trackIds.push(m.offense.trackId);
+      b.confidences.push(m.confidence);
     }
   }
 
@@ -1154,6 +1207,12 @@ export function aggregateMatchupsByOffense(
   const tendencies: OffensiveTendency[] = [];
   for (const b of buckets.values()) {
     if (b.speeds.length < 2) continue;
+    const meanConf = avg(b.confidences);
+    let trust: 'high' | 'medium' | 'low';
+    if (b.speeds.length >= 4 && meanConf >= 0.7) trust = 'high';
+    else if (b.speeds.length >= 3 && meanConf >= 0.5) trust = 'medium';
+    else trust = 'low';
+
     tendencies.push({
       jersey: b.jersey,
       role: b.role,
@@ -1163,14 +1222,18 @@ export function aggregateMatchupsByOffense(
       bestSeparationYards: Number(Math.max(...b.seps).toFixed(1)),
       avgSeparationYards: Number(avg(b.seps).toFixed(1)),
       trackIds: b.trackIds,
+      meanConfidence: Number(meanConf.toFixed(2)),
+      trust,
     });
   }
 
-  // Rank by avgSeparation × log1p(matchupCount) — consistent separation
-  // across many plays is the bigger story than one big win.
+  // Rank by avgSeparation × log1p(matchupCount) × trust weight — same as the
+  // defender side. High-trust signals always come first.
+  const trustWeight = (t: 'high' | 'medium' | 'low'): number =>
+    t === 'high' ? 1 : t === 'medium' ? 0.6 : 0.2;
   tendencies.sort((a, b) => {
-    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount);
-    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount);
+    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount) * trustWeight(a.trust);
+    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount) * trustWeight(b.trust);
     return scoreB - scoreA;
   });
 
@@ -1192,6 +1255,7 @@ export function aggregateMatchupsByDefender(
     closings: number[];
     offSpeeds: number[];
     trackIds: string[];
+    confidences: number[];
   };
 
   const buckets = new Map<string, Bucket>();
@@ -1199,10 +1263,20 @@ export function aggregateMatchupsByDefender(
   for (const p of plays) {
     if (!p.analytics?.keyMatchups) continue;
     for (const m of p.analytics.keyMatchups) {
-      // Key defenders by role + jersey so "CB #24" is tracked across plays.
-      // Without a jersey, all defenders of the same role get lumped together —
-      // better than nothing but less useful for attribution.
-      const key = `${m.defense.role}#${m.defense.jersey ?? 'unknown'}`;
+      // Drop low-confidence matchups before they can pollute the rollup.
+      // A 0.3-confidence matchup means one of the four signals (track quality,
+      // role, jersey ×2) is shaky enough that this is more "anonymous noise"
+      // than "CB #24 gave up X yards." We keep only matchups we trust.
+      if (m.confidence < 0.4) continue;
+
+      // For NAMED tendencies (the "CB #24" bucket vs the "CB unknown" bucket),
+      // jersey OCR confidence has to be high — otherwise mis-reads from
+      // multiple plays land in the same bogus bucket.
+      const useJersey = m.defense.jersey !== undefined;
+      const key = useJersey
+        ? `${m.defense.role}#${m.defense.jersey}`
+        : `${m.defense.role}#anon`;
+
       let b = buckets.get(key);
       if (!b) {
         b = {
@@ -1212,6 +1286,7 @@ export function aggregateMatchupsByDefender(
           closings: [],
           offSpeeds: [],
           trackIds: [],
+          confidences: [],
         };
         buckets.set(key, b);
       }
@@ -1219,16 +1294,25 @@ export function aggregateMatchupsByDefender(
       b.closings.push(m.closingYps);
       b.offSpeeds.push(m.offenseMaxSpeedYps);
       b.trackIds.push(m.defense.trackId);
+      b.confidences.push(m.confidence);
     }
   }
 
   const avg = (arr: number[]): number =>
     arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
 
-  // Only keep defenders with enough matchups to be a real signal (>= 2).
   const tendencies: DefenderTendency[] = [];
   for (const b of buckets.values()) {
     if (b.seps.length < 2) continue;
+    const meanConf = avg(b.confidences);
+
+    // Trust tier — drives whether the prompt cites this player by name or
+    // not, and whether the UI calls it a "tendency" or a "weak signal".
+    let trust: 'high' | 'medium' | 'low';
+    if (b.seps.length >= 4 && meanConf >= 0.7) trust = 'high';
+    else if (b.seps.length >= 3 && meanConf >= 0.5) trust = 'medium';
+    else trust = 'low';
+
     tendencies.push({
       jersey: b.jersey,
       role: b.role,
@@ -1238,14 +1322,19 @@ export function aggregateMatchupsByDefender(
       avgClosingYps: Number(avg(b.closings).toFixed(1)),
       avgOffenseSpeedYps: Number(avg(b.offSpeeds).toFixed(1)),
       trackIds: b.trackIds,
+      meanConfidence: Number(meanConf.toFixed(2)),
+      trust,
     });
   }
 
-  // Sort by exploitability: higher avg separation + more matchups = bigger tell.
-  // Cap at 8 — more than that is noise for the prompt.
+  // Sort by exploitability × trust — high-trust signals come first.
+  // A "low" trust defender with avg sep 5yd over 2 matchups should NOT
+  // outrank a "high" trust defender with avg sep 3yd over 6 matchups.
+  const trustWeight = (t: 'high' | 'medium' | 'low'): number =>
+    t === 'high' ? 1 : t === 'medium' ? 0.6 : 0.2;
   tendencies.sort((a, b) => {
-    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount);
-    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount);
+    const scoreA = a.avgSeparationYards * Math.log1p(a.matchupCount) * trustWeight(a.trust);
+    const scoreB = b.avgSeparationYards * Math.log1p(b.matchupCount) * trustWeight(b.trust);
     return scoreB - scoreA;
   });
 

@@ -46,6 +46,8 @@ describe('buildDefenderHeader', () => {
         avgClosingYps: 2.3,
         avgOffenseSpeedYps: 7.5,
         trackIds: ['t1', 't2', 't3'],
+        meanConfidence: 0.6,
+        trust: 'medium',
       },
     ]);
     expect(h).toContain('CB (jersey unreadable)');
@@ -63,6 +65,8 @@ describe('buildDefenderHeader', () => {
       avgClosingYps: 2,
       avgOffenseSpeedYps: 8,
       trackIds: [],
+      meanConfidence: 0.8,
+      trust: 'high',
     };
     expect(buildDefenderHeader([def])).toContain('CB #24: 5 matchups');
   });
@@ -82,6 +86,8 @@ describe('buildOffenseHeader', () => {
       bestSeparationYards: 5.2,
       avgSeparationYards: 3.9,
       trackIds: [],
+      meanConfidence: 0.75,
+      trust: 'high',
     };
     const h = buildOffenseHeader([off]);
     expect(h).toContain('WR #88: 6 snaps');
@@ -284,10 +290,10 @@ describe('buildAnalyticsHeader', () => {
         byPlayType: [],
       },
       defenders: [
-        { jersey: '24', role: 'CB', matchupCount: 3, avgSeparationYards: 4, worstSeparationYards: 6, avgClosingYps: 2, avgOffenseSpeedYps: 8, trackIds: [] },
+        { jersey: '24', role: 'CB', matchupCount: 3, avgSeparationYards: 4, worstSeparationYards: 6, avgClosingYps: 2, avgOffenseSpeedYps: 8, trackIds: [], meanConfidence: 0.7, trust: 'medium' },
       ],
       offense: [
-        { jersey: '88', role: 'WR', matchupCount: 3, avgMaxSpeedYps: 9, bestSeparationYards: 5, avgSeparationYards: 4, trackIds: [] },
+        { jersey: '88', role: 'WR', matchupCount: 3, avgMaxSpeedYps: 9, bestSeparationYards: 5, avgSeparationYards: 4, trackIds: [], meanConfidence: 0.7, trust: 'medium' },
       ],
       personnel: [
         { personnel: '12', count: 4, passPct: 25, runPct: 75, avgYardsGained: 3, explosivePct: 0 },

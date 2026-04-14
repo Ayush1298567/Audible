@@ -44,11 +44,25 @@ export interface PlayerTrack {
   points: TrackPoint[];
   /** If set, the jersey number identified later via OCR. */
   jersey?: string;
+  /** Claude's confidence in the jersey OCR (0-1). Only present if jersey is set. */
+  jerseyConfidence?: number;
   /** If set, the position role (e.g., "WR", "FS"). */
   role?: string;
+  /** Claude's confidence in the role inference (0-1). Only present if role is set. */
+  roleConfidence?: number;
   /** If set, the homography used to compute field coords. Row-major 3x3. */
   homography?: [number, number, number, number, number, number, number, number, number];
+  /**
+   * Composite track quality (0-1). Reflects detection confidence × length ×
+   * motion smoothness. Computed in trackDetections. Below TRACK_TRUST_THRESHOLD,
+   * downstream consumers (jersey OCR, role inference, matchups) should ignore
+   * the track to avoid amplifying noise into "tendencies."
+   */
+  trackQuality?: number;
 }
+
+/** Below this trackQuality, treat the track as noise — don't aggregate it. */
+export const TRACK_TRUST_THRESHOLD = 0.45;
 
 // ─── IoU + distance scoring ────────────────────────────────
 
@@ -284,14 +298,63 @@ export function trackDetections(frames: FrameDetections[]): PlayerTrack[] {
   // Finalize remaining active tracks
   finished.push(...tracks);
 
-  // Filter out very short tracks (noise)
-  const MIN_POINTS = 3;
+  // Tightened from 3 → 5: short tracks were silently feeding the aggregators
+  // and producing fake "tendencies" off 1-second blips of detection noise.
+  const MIN_POINTS = 5;
   return finished
     .filter((t) => t.points.length >= MIN_POINTS)
     .map((t) => ({
       trackId: t.id,
       points: t.points,
+      trackQuality: scoreTrackQuality(t.points),
     }));
+}
+
+/**
+ * Composite quality 0..1. Combines:
+ *  - Mean per-point detection confidence (Roboflow's certainty about each box)
+ *  - Length factor (more points = more trusted, capped)
+ *  - Smoothness (jumpy tracks usually indicate identity switches across players)
+ *
+ * Tracks below TRACK_TRUST_THRESHOLD (0.45) get filtered out at the start of
+ * jersey OCR, role inference, and matchup aggregation — the cost of pushing
+ * a noisy track through is a fake tendency, which is what we're trying to
+ * stop in the first place.
+ */
+function scoreTrackQuality(points: TrackPoint[]): number {
+  if (points.length === 0) return 0;
+
+  // 1. Mean detection confidence (most direct quality signal).
+  const meanConf = points.reduce((s, p) => s + p.confidence, 0) / points.length;
+
+  // 2. Length factor — saturates at ~12 points (~6 seconds at 2fps).
+  const lengthFactor = Math.min(1, points.length / 12);
+
+  // 3. Smoothness — penalize big frame-to-frame jumps that are physically
+  //    implausible for a football player. We measure normalized step size
+  //    against the expected per-frame displacement budget. A "good" track
+  //    moves <0.05 normalized units between adjacent frames; >0.2 means
+  //    the tracker likely switched identities.
+  let jumpyFraction = 0;
+  let stepCount = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const dt = b.t - a.t;
+    if (dt <= 0) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    // Per-second displacement; allow 0.4 normalized units/sec (very fast WR)
+    if (dist / dt > 0.4) jumpyFraction++;
+    stepCount++;
+  }
+  const smoothness = stepCount === 0 ? 0.5 : 1 - jumpyFraction / stepCount;
+
+  // Weighted blend — detection confidence dominates because it's the most
+  // direct signal; the others guard against length/identity-switch failure
+  // modes the detector itself can't see.
+  return Number((0.55 * meanConf + 0.20 * lengthFactor + 0.25 * smoothness).toFixed(3));
 }
 
 function detToPoint(det: Detection, frame: FrameDetections): TrackPoint {

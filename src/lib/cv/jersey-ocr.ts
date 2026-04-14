@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
-import type { PlayerTrack } from './player-tracker';
+import { type PlayerTrack, TRACK_TRUST_THRESHOLD } from './player-tracker';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +61,10 @@ interface BestMoment {
 function pickBestMomentPerTrack(tracks: PlayerTrack[]): BestMoment[] {
   const moments: BestMoment[] = [];
   for (const trk of tracks) {
+    // Skip noisy tracks — Claude will hallucinate a number for any crop we
+    // hand it, even if the underlying track was a 5-frame ghost detection.
+    if ((trk.trackQuality ?? 0) < TRACK_TRUST_THRESHOLD) continue;
+
     const [first] = trk.points;
     if (!first) continue;
     let best = first;
@@ -72,6 +76,10 @@ function pickBestMomentPerTrack(tracks: PlayerTrack[]): BestMoment[] {
         bestScore = score;
       }
     }
+    // Best detection itself must be high-quality — a track with one good
+    // frame and four blurry ones isn't reliable for OCR either.
+    if (best.confidence < 0.55) continue;
+
     moments.push({
       trackId: trk.trackId,
       t: best.t,
@@ -183,6 +191,8 @@ Output JSON matching the schema, one result per input crop, in the same order.`;
 export interface JerseyOcrResult {
   /** trackId -> jersey number (e.g., "12"), only set for confident matches. */
   jerseys: Record<string, string>;
+  /** trackId -> Claude's confidence in that jersey (0-1). Same keys as jerseys. */
+  jerseyConfidences: Record<string, number>;
   /** Number of crops attempted. */
   cropsAttempted: number;
   /** Number of jerseys successfully read. */
@@ -200,13 +210,17 @@ export async function ocrJerseysForTracks(args: {
   frameWidth: number;
   frameHeight: number;
 }): Promise<JerseyOcrResult> {
-  const MIN_CONFIDENCE = 0.55;
+  // Bumped from 0.55 → 0.7. The aggregator rolls up by jersey+role; one
+  // mis-read jersey at 0.6 confidence pollutes the "CB #24" bucket with
+  // plays from a different player, producing fake separation tendencies.
+  // Better to leave a track jersey-less than to assert a wrong jersey.
+  const MIN_CONFIDENCE = 0.7;
 
   if (args.tracks.length === 0) {
-    return { jerseys: {}, cropsAttempted: 0, jerseysRead: 0 };
+    return { jerseys: {}, jerseyConfidences: {}, cropsAttempted: 0, jerseysRead: 0 };
   }
 
-  // 1. Pick the best moment per track
+  // 1. Pick the best moment per track (filters out untrustable tracks)
   const moments = pickBestMomentPerTrack(args.tracks);
 
   // 2. Crop all jerseys (sequential — ffmpeg is CPU-bound anyway)
@@ -217,7 +231,12 @@ export async function ocrJerseysForTracks(args: {
   }
 
   if (crops.length === 0) {
-    return { jerseys: {}, cropsAttempted: moments.length, jerseysRead: 0 };
+    return {
+      jerseys: {},
+      jerseyConfidences: {},
+      cropsAttempted: moments.length,
+      jerseysRead: 0,
+    };
   }
 
   // 3. Send all crops to Claude in one call
@@ -261,11 +280,17 @@ export async function ocrJerseysForTracks(args: {
   }
 
   if (!parsed) {
-    return { jerseys: {}, cropsAttempted: crops.length, jerseysRead: 0 };
+    return {
+      jerseys: {},
+      jerseyConfidences: {},
+      cropsAttempted: crops.length,
+      jerseysRead: 0,
+    };
   }
 
   // 4. Map back to trackIds, filtering by confidence + "unclear" sentinel
   const jerseys: Record<string, string> = {};
+  const jerseyConfidences: Record<string, number> = {};
   for (const r of parsed.results) {
     const crop = crops[r.index];
     if (!crop) continue;
@@ -274,10 +299,12 @@ export async function ocrJerseysForTracks(args: {
     // Must be digits only (Claude is instructed, but sanity check)
     if (!/^\d{1,2}$/.test(r.jersey)) continue;
     jerseys[crop.trackId] = r.jersey;
+    jerseyConfidences[crop.trackId] = r.confidence;
   }
 
   return {
     jerseys,
+    jerseyConfidences,
     cropsAttempted: crops.length,
     jerseysRead: Object.keys(jerseys).length,
   };
@@ -290,9 +317,15 @@ export async function ocrJerseysForTracks(args: {
 export function applyJerseysToTracks(
   tracks: PlayerTrack[],
   jerseys: Record<string, string>,
+  confidences: Record<string, number> = {},
 ): PlayerTrack[] {
   return tracks.map((t) => {
     const j = jerseys[t.trackId];
-    return j ? { ...t, jersey: j } : t;
+    if (!j) return t;
+    return {
+      ...t,
+      jersey: j,
+      jerseyConfidence: confidences[t.trackId],
+    };
   });
 }

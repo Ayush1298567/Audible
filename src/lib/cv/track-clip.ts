@@ -172,7 +172,7 @@ export async function trackPlayersInClip(
         frameWidth: imageWidth,
         frameHeight: imageHeight,
       });
-      tracks = applyJerseysToTracks(tracks, ocr.jerseys);
+      tracks = applyJerseysToTracks(tracks, ocr.jerseys, ocr.jerseyConfidences);
       jerseysRead = ocr.jerseysRead;
     } catch (err) {
       // Jersey OCR is best-effort — a failure here should NOT kill tracking.
@@ -266,7 +266,7 @@ export async function trackPlayersInClip(
         formation: opts.playContext?.formation,
         coverage: opts.playContext?.coverage,
       });
-      tracks = applyRolesToTracks(tracks, roleResult.roles);
+      tracks = applyRolesToTracks(tracks, roleResult.roles, roleResult.roleConfidences);
       rolesAssigned = roleResult.assigned;
     } catch (err) {
       console.warn('role_inference_failed', {

@@ -148,14 +148,21 @@ Rules:
    CV-derived answer to "who got open and against whom." When you cite a
    tendency, prefer citing the exact matchup — "their CB #24 gave up 3.2 yds
    of separation on slants" beats "they give up separation on slants".
-7. USE THE DEFENDER-TENDENCIES HEADER. The header lists each defender by
-   jersey and role with their matchup count and average separation across
-   the whole opponent film. A DB appearing in 5+ matchups with >3 yds avg
-   separation is a dominant tendency — at least one of your insights should
-   target them by name.
-   The OFFENSIVE-PLAYMAKERS block mirrors this for their skill players —
-   use it to flag "their WR #88 is the threat, bracket him" style alerts
-   so the coach's defensive call isn't just symmetrical to their offense.
+7. USE THE DEFENDER-TENDENCIES HEADER, BUT RESPECT THE TRUST TIER.
+   Each row carries [trust=high|medium|low, conf=X.XX]. These come from
+   real CV-pipeline confidence scores (track quality × role inference ×
+   jersey OCR), and they MUST guide what you cite:
+   - trust=high: cite this defender by name in your narrative + recommendations.
+   - trust=medium: mention as a recurring pattern, e.g. "their boundary CB
+     gives up separation"; do NOT name a specific jersey number.
+   - trust=low: ignore. Do not cite even as a pattern. The data is too
+     noisy to call a tendency.
+   - "jersey unreadable" rows: NEVER cite as a specific player. They're
+     pattern signals, not player IDs.
+   The OFFENSIVE-PLAYMAKERS block mirrors this with the same trust rules.
+   Citing a player by name when trust < high is a HALLUCINATION; the coach
+   will lose faith in the system the moment a #24 they don't have on the
+   roster shows up in a recommendation.
 8. For each evidence play, populate highlight_tracks_per_play with the
    track IDs the coach should watch — typically the offense/defense pair
    from the key matchup (trackIds in the matchups array). This is what
@@ -188,7 +195,20 @@ Rules:
     personnel), cite it by play ID as evidence. Tendencies that lack
     any explosive backing are weaker narratives.
 
-Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
+14. NEVER FABRICATE NUMBERS OR PLAYERS. This is the most important rule.
+    - Every measurement you cite (yards, percentages, jersey numbers,
+      separation, speed) MUST appear verbatim in the headers or per-play
+      JSON above. If you can't point to its source, don't cite it.
+    - Every play ID in evidence_play_ids MUST appear in the per-play JSON.
+      Inventing IDs invalidates the whole walkthrough.
+    - If a tendency is supported by 2 plays only, say "2 plays" — don't
+      round up to "consistently."
+    - When the data doesn't support a strong claim, return FEWER insights.
+      Three honest insights are infinitely more valuable than five with
+      one hallucinated detail.
+
+Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.
+A SINGLE fabricated number ruins the whole walkthrough's credibility.`;
 
 export async function POST(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/scouting-walkthrough', method: 'POST' }, req);
@@ -475,6 +495,60 @@ export async function POST(req: Request): Promise<Response> {
     if (!output) {
       throw new Error('Claude returned no output');
     }
+
+    // Hallucination guards — Claude is told not to fabricate, but the only
+    // way to actually enforce that is to validate every claim it makes
+    // against the data we provided. An insight that cites a play we never
+    // sent, or names a jersey that wasn't in the trusted defender/offense
+    // headers, gets dropped entirely. Better to ship 2 grounded insights
+    // than 5 with one made-up player.
+    const validPlayIds = new Set(playsForPrompt.map((p) => p.id));
+    const namedPlayers = new Set<string>();
+    for (const d of defenderTendencies) {
+      if (d.trust === 'high' && d.jersey) namedPlayers.add(`${d.role}#${d.jersey}`);
+    }
+    for (const o of offenseTendencies) {
+      if (o.trust === 'high' && o.jersey) namedPlayers.add(`${o.role}#${o.jersey}`);
+    }
+
+    const validatedInsights = output.insights.filter((ins) => {
+      // Drop insights whose evidence references unknown play IDs
+      const allEvidenceValid = ins.evidence_play_ids.every((id) => validPlayIds.has(id));
+      if (!allEvidenceValid) {
+        console.warn('walkthrough_dropped_hallucinated_play', {
+          headline: ins.headline,
+          ids: ins.evidence_play_ids,
+        });
+        return false;
+      }
+
+      // Detect "ROLE #NN" mentions in narrative or recommendations
+      const text = `${ins.narrative} ${ins.recommendations.map((r) => `${r.situation} ${r.call} ${r.rationale}`).join(' ')}`;
+      const playerRefs = text.matchAll(/\b(QB|RB|WR|TE|OL|DL|LB|CB|S)\s*#?(\d{1,2})\b/g);
+      for (const m of playerRefs) {
+        const role = m[1];
+        const jersey = m[2];
+        if (!namedPlayers.has(`${role}#${jersey}`)) {
+          console.warn('walkthrough_dropped_unverified_player_reference', {
+            headline: ins.headline,
+            playerRef: `${role} #${jersey}`,
+          });
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (validatedInsights.length === 0) {
+      throw new Error(
+        'Walkthrough produced no verifiable insights — every candidate either ' +
+          'referenced unknown play IDs or named players the trust pipeline ' +
+          'did not validate. Re-run with more film if this opponent has ≤5 plays.',
+      );
+    }
+
+    output.insights = validatedInsights;
 
     // Build the walkthrough shape the front end expects
     const playMap = new Map(allPlays.map((p) => [p.id, p]));
