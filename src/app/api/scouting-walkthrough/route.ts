@@ -16,6 +16,7 @@ import {
 import { withProgramContext } from '@/lib/db/client';
 import { games, opponents, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
+import { buildCallSheet } from '@/lib/scouting/call-sheet';
 import type { InsightExample, Walkthrough } from '@/lib/scouting/insights';
 
 export const maxDuration = 180;
@@ -630,7 +631,15 @@ ${situations.map((s) => {
       })),
     };
 
-    span.done({ opponentId: opp.id, insights: walkthrough.insights.length });
+    // Derive the Friday call sheet from the structured recommendations.
+    // Pure post-processing — no extra AI cost.
+    walkthrough.callSheet = buildCallSheet(walkthrough.insights);
+
+    span.done({
+      opponentId: opp.id,
+      insights: walkthrough.insights.length,
+      callSheetBuckets: walkthrough.callSheet.buckets.length,
+    });
 
     return Response.json(walkthrough);
   } catch (error) {
@@ -639,6 +648,7 @@ ${situations.map((s) => {
     return Response.json({ error: msg }, { status: 500 });
   }
 }
+
 
 function slugify(s: string): string {
   return s

@@ -21,12 +21,14 @@ interface Props {
 type View =
   | { step: 'intro' }
   | { step: 'insight'; insightIdx: number; exampleIdx: number }
+  | { step: 'call-sheet' }
   | { step: 'summary' };
 
 export function WalkthroughView({ walkthrough, onClose }: Props) {
   const [view, setView] = useState<View>({ step: 'intro' });
 
   const { insights } = walkthrough;
+  const hasCallSheet = (walkthrough.callSheet?.buckets.length ?? 0) > 0;
 
   const next = () => {
     if (view.step === 'intro') {
@@ -36,7 +38,7 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
     if (view.step === 'insight') {
       const currentInsight = insights[view.insightIdx];
       if (!currentInsight) {
-        setView({ step: 'summary' });
+        setView(hasCallSheet ? { step: 'call-sheet' } : { step: 'summary' });
         return;
       }
       // Move to next example within current insight, or next insight
@@ -45,8 +47,12 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
       } else if (view.insightIdx + 1 < insights.length) {
         setView({ step: 'insight', insightIdx: view.insightIdx + 1, exampleIdx: 0 });
       } else {
-        setView({ step: 'summary' });
+        setView(hasCallSheet ? { step: 'call-sheet' } : { step: 'summary' });
       }
+      return;
+    }
+    if (view.step === 'call-sheet') {
+      setView({ step: 'summary' });
       return;
     }
   };
@@ -67,7 +73,8 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
       }
       return;
     }
-    if (view.step === 'summary') {
+    if (view.step === 'call-sheet') {
+      // Back to last insight's last example
       const lastIdx = insights.length - 1;
       const lastInsight = insights[lastIdx];
       setView({
@@ -75,6 +82,20 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
         insightIdx: lastIdx,
         exampleIdx: (lastInsight?.examples.length ?? 1) - 1,
       });
+      return;
+    }
+    if (view.step === 'summary') {
+      if (hasCallSheet) {
+        setView({ step: 'call-sheet' });
+      } else {
+        const lastIdx = insights.length - 1;
+        const lastInsight = insights[lastIdx];
+        setView({
+          step: 'insight',
+          insightIdx: lastIdx,
+          exampleIdx: (lastInsight?.examples.length ?? 1) - 1,
+        });
+      }
     }
   };
 
@@ -153,6 +174,13 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
               onNext={next}
               onPrev={prev}
               onSkip={skipInsight}
+            />
+          )}
+          {view.step === 'call-sheet' && walkthrough.callSheet && (
+            <CallSheetStep
+              walkthrough={walkthrough}
+              onNext={next}
+              onPrev={prev}
             />
           )}
           {view.step === 'summary' && (
@@ -468,6 +496,85 @@ function SummaryStep({
           className="h-11 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest px-6"
         >
           Done — build the game plan
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Call Sheet step ────────────────────────────────────────
+
+function CallSheetStep({
+  walkthrough,
+  onNext,
+  onPrev,
+}: {
+  walkthrough: Walkthrough;
+  onNext: () => void;
+  onPrev: () => void;
+}) {
+  const buckets = walkthrough.callSheet?.buckets ?? [];
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div>
+        <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
+          Friday Call Sheet
+        </p>
+        <h1 className="font-display text-3xl font-bold text-white">
+          By situation
+        </h1>
+        <p className="text-slate-400 mt-2">
+          Every recommendation bucketed by when to call it. Print this. Carry it.
+        </p>
+      </div>
+
+      {/* Bucketed card grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {buckets.map((b) => (
+          <div
+            key={b.bucket}
+            className="glass-card rounded-xl p-5 space-y-3 border-l-2 border-l-cyan-500/50"
+          >
+            <div className="flex items-baseline justify-between">
+              <h3 className="font-display text-sm font-bold text-white uppercase tracking-wide">
+                {b.bucket}
+              </h3>
+              <span className="text-[10px] text-slate-500 tabular-nums">
+                {b.recommendations.length} call{b.recommendations.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <ul className="space-y-2">
+              {b.recommendations.map((r, i) => (
+                <li key={`${b.bucket}-${i}`} className="space-y-0.5">
+                  <p className="text-sm font-semibold text-white">{r.call}</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {r.rationale}
+                  </p>
+                  <p className="text-[9px] text-cyan-400/60 uppercase tracking-widest">
+                    → {r.insightHeadline}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      {/* Navigation */}
+      <div className="flex items-center justify-between pt-4">
+        <Button
+          variant="ghost"
+          onClick={onPrev}
+          className="font-display text-xs uppercase tracking-widest"
+        >
+          ← Back
+        </Button>
+        <Button
+          onClick={onNext}
+          className="h-11 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest px-6"
+        >
+          See the summary →
         </Button>
       </div>
     </div>

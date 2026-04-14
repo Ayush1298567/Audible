@@ -106,6 +106,30 @@ export interface Insight {
 
 // ─── Walkthrough shape ───────────────────────────────────────
 
+/**
+ * A compact Friday call sheet: every structured recommendation bucketed
+ * by the game situation that triggers it. This is the "printable cheat
+ * card" a coach carries on the sideline.
+ *
+ * Derived post-hoc from Walkthrough.insights — no extra AI cost.
+ */
+export interface CallSheetBucket {
+  /** Situation label — "3rd & long", "red zone", "base down", etc. */
+  bucket: string;
+  /** Recommendations that fire in this situation (may span multiple insights). */
+  recommendations: Array<{
+    /** The parent insight's headline, so the coach can jump back if needed. */
+    insightHeadline: string;
+    insightId: string;
+    call: string;
+    rationale: string;
+  }>;
+}
+
+export interface CallSheet {
+  buckets: CallSheetBucket[];
+}
+
 export interface Walkthrough {
   opponentId: string;
   opponentName: string;
@@ -117,4 +141,6 @@ export interface Walkthrough {
   summary: string;
   /** ISO timestamp. */
   generatedAt: string;
+  /** Derived call sheet — Friday sideline cheat card. */
+  callSheet?: CallSheet;
 }
