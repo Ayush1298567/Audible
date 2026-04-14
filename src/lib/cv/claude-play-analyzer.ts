@@ -65,8 +65,8 @@ export const playAnalysisSchema = z.object({
 
   // CONFIDENCE + REASONING
   confidence: z.number().min(0).max(1),
-  keyObservations: z.array(z.string().max(150)).min(1).max(5).describe('2-4 things a coach should notice on this play'),
-  reasoning: z.string().min(20).max(500),
+  keyObservations: z.array(z.string().max(300)).min(1).max(5).describe('2-4 things a coach should notice on this play'),
+  reasoning: z.string().min(20).max(1500),
 });
 
 export type PlayAnalysis = z.infer<typeof playAnalysisSchema>;
