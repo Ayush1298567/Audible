@@ -124,11 +124,14 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     // Serialize plays for Claude — include per-play peak speed, depth, duration
-    // when field-space tracking is available so Claude's tendencies can cite
-    // real numbers instead of vibes.
+    // ONLY when field-space tracking is available. Pixel-space values would
+    // mislead Claude into citing fake measurements.
     const playsForPrompt = allPlays.map((p, idx) => {
       const a = parsedAnalytics[idx];
-      const deepest = a?.tracks.find((t) => t.trackId === a.deepestTrackId);
+      const isFieldSpace = a?.fieldSpace === true;
+      const deepest = isFieldSpace
+        ? a?.tracks.find((t) => t.trackId === a.deepestTrackId)
+        : undefined;
       return {
         id: p.id,
         down: p.down,
@@ -145,10 +148,13 @@ export async function POST(req: Request): Promise<Response> {
         route: (p.coachOverride as { aiRouteConcept?: string })?.aiRouteConcept,
         gap: (p.coachOverride as { aiRunGap?: string })?.aiRunGap,
         observations: (p.coachOverride as { aiObservations?: string })?.aiObservations,
-        // CV-derived measurements (undefined when tracking wasn't field-registered)
-        peakSpeedYps: a?.peakSpeedYps ? Number(a.peakSpeedYps.toFixed(1)) : undefined,
-        playDurationSec: a?.playDurationSeconds ? Number(a.playDurationSeconds.toFixed(1)) : undefined,
-        maxDepthYards: deepest?.maxDepthYards ? Number(deepest.maxDepthYards.toFixed(1)) : undefined,
+        // CV-derived measurements — only set when the clip was field-calibrated
+        peakSpeedYps: isFieldSpace && a && a.peakSpeedYps > 0
+          ? Number(a.peakSpeedYps.toFixed(1)) : undefined,
+        playDurationSec: a?.playDurationSeconds && a.playDurationSeconds > 0
+          ? Number(a.playDurationSeconds.toFixed(1)) : undefined,
+        maxDepthYards: deepest?.maxDepthYards !== undefined
+          ? Number(deepest.maxDepthYards.toFixed(1)) : undefined,
       };
     });
 
@@ -222,13 +228,15 @@ export async function POST(req: Request): Promise<Response> {
               playAnalytics = rawAnalytics as PlayAnalytics;
             }
             let measurements: InsightExample['measurements'] = undefined;
-            if (playAnalytics) {
-              // Find the track that hit peakSpeedYps (for jersey/role attribution)
+            // Only surface measurements when calibration succeeded — pixel-space
+            // speeds/distances are meaningless and would mislead the coach. Play
+            // duration is always valid (it's just elapsed seconds).
+            if (playAnalytics?.fieldSpace) {
               const peakTrack = playAnalytics.tracks.find(
-                (t) => Math.abs(t.maxSpeedYps - playAnalytics!.peakSpeedYps) < 0.01,
+                (t) => Math.abs(t.maxSpeedYps - playAnalytics.peakSpeedYps) < 0.01,
               );
               const deepest = playAnalytics.tracks.find(
-                (t) => t.trackId === playAnalytics!.deepestTrackId,
+                (t) => t.trackId === playAnalytics.deepestTrackId,
               );
               measurements = {
                 peakSpeedYps: playAnalytics.peakSpeedYps > 0
@@ -243,7 +251,14 @@ export async function POST(req: Request): Promise<Response> {
                 playDurationSec: playAnalytics.playDurationSeconds > 0
                   ? Number(playAnalytics.playDurationSeconds.toFixed(1))
                   : undefined,
-                fieldRegistered: playAnalytics.fieldSpace,
+                fieldRegistered: true,
+              };
+            } else if (playAnalytics && playAnalytics.playDurationSeconds > 0) {
+              // Pixel-space fallback: still show the play time (always valid) but
+              // omit speed/depth so the coach doesn't see nonsense numbers.
+              measurements = {
+                playDurationSec: Number(playAnalytics.playDurationSeconds.toFixed(1)),
+                fieldRegistered: false,
               };
             }
             return {

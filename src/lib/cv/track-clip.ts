@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { detectPeopleInFrames } from './player-detector';
 import { trackDetections, type PlayerTrack } from './player-tracker';
 import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
-import { calibrateFieldFromClip, applyHomography } from './field-homography';
+import { calibrateFieldFromClip, applyHomography, computeHomographyDLT, type CalibrationResult } from './field-homography';
 import { computePlayAnalytics, type PlayAnalytics } from './track-analytics';
 import { inferTrackRoles, applyRolesToTracks } from './role-inference';
 
@@ -41,6 +41,20 @@ export interface TrackClipOptions {
   readJerseys?: boolean;
   /** Run field homography + project tracks into yard coords. Default true. */
   registerField?: boolean;
+  /**
+   * Pre-computed landmarks (e.g., from Claude's play analyzer, which already
+   * looked at the pre-snap frame). When provided, skips the separate
+   * calibration Claude call. Each landmark: pixel coords (0-1 normalized)
+   * plus field coords in yards.
+   */
+  preComputedLandmarks?: Array<{
+    px: number;
+    py: number;
+    fx: number;
+    fy: number;
+    confidence: number;
+    description?: string;
+  }>;
   /** Infer football roles for each track. Default true (requires field registration). */
   inferRoles?: boolean;
   /** Context passed to role inference to help Claude break ties. */
@@ -158,7 +172,47 @@ export async function trackPlayersInClip(
   let fieldCalibrationError: number | undefined;
   if (opts.registerField !== false && tracks.length > 0) {
     try {
-      const calibration = await calibrateFieldFromClip(clipPath, clipDurationSeconds);
+      let calibration: CalibrationResult | null = null;
+
+      // Prefer pre-computed landmarks (saves a Claude call); fall back to
+      // dedicated calibration call if none supplied.
+      if (opts.preComputedLandmarks && opts.preComputedLandmarks.length >= 4) {
+        const good = opts.preComputedLandmarks.filter((l) => l.confidence >= 0.6);
+        const landmarks = good.length >= 4 ? good : opts.preComputedLandmarks;
+        const correspondences = landmarks.map((l) => ({
+          pixel: { px: l.px, py: l.py },
+          field: { fx: l.fx, fy: l.fy },
+        }));
+        const H = computeHomographyDLT(correspondences);
+        if (H) {
+          // Reprojection error check — reject bad calibrations
+          let sum = 0;
+          for (const c of correspondences) {
+            const proj = applyHomography(c.pixel, H);
+            if (!proj) continue;
+            const dx = proj.fx - c.field.fx;
+            const dy = proj.fy - c.field.fy;
+            sum += Math.sqrt(dx * dx + dy * dy);
+          }
+          const err = sum / correspondences.length;
+          if (err <= 8) {
+            calibration = {
+              homography: H,
+              landmarks: landmarks.map((l) => ({
+                pixel: { px: l.px, py: l.py },
+                field: { fx: l.fx, fy: l.fy },
+                description: l.description ?? '',
+              })),
+              reprojectionError: err,
+            };
+          }
+        }
+      }
+
+      if (!calibration) {
+        calibration = await calibrateFieldFromClip(clipPath, clipDurationSeconds);
+      }
+
       if (calibration) {
         fieldRegistered = true;
         fieldCalibrationError = calibration.reprojectionError;

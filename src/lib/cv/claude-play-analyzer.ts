@@ -59,6 +59,20 @@ export const playAnalysisSchema = z.object({
   confidence: z.number().min(0).max(1),
   keyObservations: z.array(z.string().max(300)).min(1).max(5).describe('2-4 things a coach should notice on this play'),
   reasoning: z.string().min(20).max(1500),
+
+  // FIELD CALIBRATION (M3) — optional; identify 4-6 field landmarks on the
+  // pre_snap frame so we can compute a pixel→yard homography. Saves a
+  // separate Claude call per clip.
+  fieldLandmarks: z.array(
+    z.object({
+      description: z.string().describe('What was identified (e.g. "30-yard line meets near sideline")'),
+      px: z.number().min(0).max(1).describe('Normalized x in the pre_snap frame (0-1)'),
+      py: z.number().min(0).max(1).describe('Normalized y in the pre_snap frame (0-1)'),
+      fx: z.number().min(0).max(100).describe('Yards downfield from near goal line (0-100)'),
+      fy: z.number().min(0).max(53.3).describe('Yards from near sideline (0-53.3)'),
+      confidence: z.number().min(0).max(1),
+    }),
+  ).max(8).optional().describe('4-6 field landmarks from the pre_snap frame. Empty if the field markings are not visible.'),
 });
 
 export type PlayAnalysis = z.infer<typeof playAnalysisSchema>;
@@ -158,7 +172,15 @@ Key definitions:
 - Personnel: "11" = 1 RB + 1 TE + 3 WR, "12" = 1 RB + 2 TE + 2 WR, etc
 - Run gaps: A (between center/guard), B (guard/tackle), C (tackle/TE), D (outside TE)
 - Route concepts: Mesh (two crossing shallows), Levels (hitch + dig), Flood (3 routes to same side),
-  Stick (hitch + corner + flat), Slant-Flat, Four Verts, Curl-Flat, Spacing, Screen`;
+  Stick (hitch + corner + flat), Slant-Flat, Four Verts, Curl-Flat, Spacing, Screen
+
+FIELD LANDMARKS: On the pre_snap frame (and only that one), also identify 4-6 well-spread
+field landmarks — each with pixel coords (0-1 normalized) and field coords in yards:
+  fx = yards downfield from the NEAR goal line (0 = near goal, 100 = far goal)
+  fy = yards from the NEAR sideline (0 = near, 53.3 = far)
+Good landmarks: painted yard-line numbers ("30", "40", "50"), intersections of yard lines
+with sidelines or hash marks, goal-line corners. Include landmarks at different depths if
+possible. If you cannot identify 4 clearly, leave the fieldLandmarks array empty.`;
 
 export interface PlayAnalysisInput {
   clipPath: string;

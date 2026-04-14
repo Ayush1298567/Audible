@@ -220,12 +220,21 @@ export async function trackPlayersForOnePlay(
   clipBlobUrl: string,
   durationSeconds: number,
   playContext?: { playType?: string; formation?: string; coverage?: string },
+  preComputedLandmarks?: Array<{
+    px: number;
+    py: number;
+    fx: number;
+    fy: number;
+    confidence: number;
+    description?: string;
+  }>,
 ): Promise<{ tracks: PlayerTrack[]; analytics: PlayAnalytics | null }> {
   'use step';
   try {
     const result = await trackPlayersInClip(clipBlobUrl, durationSeconds, {
       fps: 2,
       playContext,
+      preComputedLandmarks,
     });
     console.log('tracking_done', {
       clipBlobUrl,
@@ -362,6 +371,10 @@ export async function gameBreakdownWorkflow(job: GameBreakdownJob): Promise<{
         formation: analysis?.formation ?? boundary.formation ?? undefined,
         coverage: analysis?.coverageShell ?? undefined,
       },
+      // Reuse field landmarks from the play analysis — saves a Claude call
+      analysis?.fieldLandmarks && analysis.fieldLandmarks.length >= 4
+        ? analysis.fieldLandmarks
+        : undefined,
     );
 
     await savePlayToDb(
