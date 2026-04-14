@@ -74,7 +74,7 @@ export async function extractPlayClips(
   });
 
   try {
-    // Install ffmpeg + download source video
+    // Install ffmpeg + download source video + get duration
     const setup = await sandbox.runCommand({
       cmd: 'bash',
       args: ['-c', `
@@ -82,8 +82,9 @@ export async function extractPlayClips(
         sudo dnf install -y xz >/dev/null 2>&1
         curl -sL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /tmp
         sudo mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/
+        sudo mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/
         curl -sL "${videoBlobUrl}" -o /tmp/video.mp4
-        ls -la /tmp/video.mp4
+        ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/video.mp4
       `],
       sudo: true,
     });
@@ -92,15 +93,40 @@ export async function extractPlayClips(
       throw new Error(`Sandbox setup failed: ${(await setup.stderr()).slice(0, 200)}`);
     }
 
+    const durationStr = (await setup.stdout()).trim();
+    const videoDurationSeconds = Number(durationStr);
+    if (!videoDurationSeconds || !isFinite(videoDurationSeconds)) {
+      throw new Error(`Could not determine video duration: ${durationStr}`);
+    }
+
+    // Filter out Gemini's hallucinated timestamps past video end
+    const validBoundaries = playBoundaries.filter(
+      (b) => b.startSeconds >= 0 && b.startSeconds < videoDurationSeconds,
+    );
+
+    console.log('game_breakdown_duration', {
+      videoDurationSeconds,
+      geminiDetected: playBoundaries.length,
+      withinBounds: validBoundaries.length,
+    });
+
     const clips: Array<{ blobUrl: string; durationSeconds: number; boundary: DetectedPlay }> = [];
 
-    for (let i = 0; i < playBoundaries.length; i++) {
-      const boundary = playBoundaries[i]!;
-      const duration = boundary.endSeconds - boundary.startSeconds;
+    for (let i = 0; i < validBoundaries.length; i++) {
+      const boundary = validBoundaries[i]!;
+      const duration = Math.min(
+        boundary.endSeconds - boundary.startSeconds,
+        videoDurationSeconds - boundary.startSeconds,
+      );
 
       // Extract clip with 1s pre-roll for pre-snap context
       const start = Math.max(0, boundary.startSeconds - 1);
-      const actualDuration = duration + 1;
+      const actualDuration = Math.min(duration + 1, videoDurationSeconds - start);
+
+      if (actualDuration < 3) {
+        console.warn('skipping_clip_too_short', { i, actualDuration });
+        continue;
+      }
 
       // Re-encode (not -c copy) so clip duration is EXACTLY what we request.
       // -c copy cuts only on keyframes → actual duration can be much shorter.
@@ -121,10 +147,17 @@ export async function extractPlayClips(
         ],
       });
 
-      if (clipResult.exitCode !== 0) continue;
+      if (clipResult.exitCode !== 0) {
+        console.warn('ffmpeg_clip_failed', { i, exitCode: clipResult.exitCode });
+        continue;
+      }
 
       const clipBuffer = await sandbox.readFileToBuffer({ path: `/tmp/play-${i}.mp4` });
-      if (!clipBuffer) continue;
+      if (!clipBuffer || clipBuffer.length < 10_000) {
+        // Anything under 10KB is an empty/corrupt clip — skip.
+        console.warn('clip_too_small', { i, size: clipBuffer?.length ?? 0 });
+        continue;
+      }
 
       // Upload to Blob
       const blob = await put(
