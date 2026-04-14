@@ -102,6 +102,8 @@ export async function extractPlayClips(
       const start = Math.max(0, boundary.startSeconds - 1);
       const actualDuration = duration + 1;
 
+      // Re-encode (not -c copy) so clip duration is EXACTLY what we request.
+      // -c copy cuts only on keyframes → actual duration can be much shorter.
       const clipResult = await sandbox.runCommand({
         cmd: 'ffmpeg',
         args: [
@@ -109,7 +111,12 @@ export async function extractPlayClips(
           '-ss', String(start),
           '-i', '/tmp/video.mp4',
           '-t', String(actualDuration),
-          '-c', 'copy',
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '23',
+          '-c:a', 'aac',
+          '-b:a', '96k',
+          '-movflags', '+faststart',
           `/tmp/play-${i}.mp4`,
         ],
       });

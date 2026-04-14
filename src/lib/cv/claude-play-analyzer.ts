@@ -169,7 +169,12 @@ export interface PlayAnalysisInput {
 
 export async function analyzePlayClip(input: PlayAnalysisInput): Promise<PlayAnalysis | null> {
   const frames = await extractSequentialFrames(input.clipPath, input.clipDurationSeconds);
-  if (frames.length === 0) return null;
+  if (frames.length < 3) {
+    // Need at least 3 frames to see motion across time. Shorter clips
+    // (keyframe-cut glitches, <3s plays) aren't worth sending to Claude.
+    console.warn('claude_skipped_insufficient_frames', { frameCount: frames.length });
+    return null;
+  }
 
   // Build the multi-frame message
   const imageContent = frames.map((f) => ({
@@ -188,17 +193,37 @@ export async function analyzePlayClip(input: PlayAnalysisInput): Promise<PlayAna
     text: `${ctx}${dd}The ${frames.length} frames below are in chronological order (${frameLabels}) from a single football play. Analyze the full motion across them and output your scouting tags.`,
   };
 
-  const { output } = await generateText({
-    model: gateway(ANALYZER_MODEL),
-    system: SYSTEM_PROMPT,
-    messages: [{
-      role: 'user',
-      content: [...imageContent, textContent],
-    }],
-    output: Output.object({ schema: playAnalysisSchema }),
-  });
+  // One retry on transient failures (rate limits, schema hiccups)
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { output } = await generateText({
+        model: gateway(ANALYZER_MODEL),
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: 'user',
+          content: [...imageContent, textContent],
+        }],
+        output: Output.object({ schema: playAnalysisSchema }),
+      });
 
-  return output ?? null;
+      if (output) return output;
+    } catch (err) {
+      lastError = err;
+      // Backoff briefly before retry
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+  }
+
+  if (lastError) {
+    console.error('claude_analysis_failed_after_retry', {
+      message: lastError instanceof Error ? lastError.message.slice(0, 300) : String(lastError),
+    });
+  }
+
+  return null;
 }
 
 /**
