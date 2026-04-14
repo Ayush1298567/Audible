@@ -10,6 +10,7 @@ import {
   aggregateQuarterTendencies,
   aggregateRouteVsCoverage,
   computeSituationalTendencies,
+  extractExplosivePlays,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
 import { withProgramContext } from '@/lib/db/client';
@@ -133,6 +134,12 @@ Rules:
     right → run jet right 70%" is a tell the coach tells LBs "match
     jet." Flag any motion-to-direction pattern ≥60% as a bullet the
     coach should coach during the week.
+13. USE THE EXPLOSIVE-PLAYS BLOCK. These are the single biggest
+    outliers — gains ≥15 yds and losses ≤-7 yds — with their play IDs.
+    Explosives are great evidence clips. If an explosive matches a
+    tendency you've identified (right coverage, right motion, right
+    personnel), cite it by play ID as evidence. Tendencies that lack
+    any explosive backing are weaker narratives.
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -202,6 +209,24 @@ export async function POST(req: Request): Promise<Response> {
       return raw ? (raw as PlayAnalytics) : null;
     });
 
+    // Explosive plays: the biggest single outliers (gains + losses).
+    // Computed early so the prompt-cap logic can guarantee they're included.
+    const explosives = extractExplosivePlays(
+      allPlays.map((p) => ({
+        id: p.id,
+        down: p.down,
+        distance: p.distance,
+        quarter: p.quarter,
+        formation: p.formation,
+        playType: p.playType,
+        playDirection: p.playDirection,
+        gainLoss: p.gainLoss,
+        result: p.result,
+        coverage: (p.coachOverride as { aiCoverage?: string })?.aiCoverage,
+        route: (p.coachOverride as { aiRouteConcept?: string })?.aiRouteConcept,
+      })),
+    );
+
     // Prompt budget guard: on games with lots of plays we send only the most
     // informative ones as per-play JSON. Everything still contributes to the
     // aggregated headers — those scale O(1) in the prompt regardless of play
@@ -223,13 +248,24 @@ export async function POST(req: Request): Promise<Response> {
       return { idx, score };
     });
 
+    // Force-include every explosive play (those blurbs reference playIds that
+    // MUST exist in the JSON so Claude can cite them as evidence).
+    const explosiveIds = new Set(explosives.map((e) => e.playId));
+
     const keptIndices = allPlays.length <= PROMPT_PLAY_CAP
       ? allPlays.map((_, i) => i)
-      : playScores
-          .sort((a, b) => (b.score - a.score) || (b.idx - a.idx))
-          .slice(0, PROMPT_PLAY_CAP)
-          .map((p) => p.idx)
-          .sort((a, b) => a - b); // restore natural order for Claude's reading flow
+      : (() => {
+          const forced = allPlays
+            .map((p, i) => (explosiveIds.has(p.id) ? i : -1))
+            .filter((i) => i >= 0);
+          const forcedSet = new Set(forced);
+          const topByScore = playScores
+            .filter((p) => !forcedSet.has(p.idx))
+            .sort((a, b) => (b.score - a.score) || (b.idx - a.idx))
+            .slice(0, Math.max(0, PROMPT_PLAY_CAP - forced.length))
+            .map((p) => p.idx);
+          return [...forced, ...topByScore].sort((a, b) => a - b);
+        })();
 
     const keptSet = new Set(keptIndices);
 
@@ -295,6 +331,8 @@ export async function POST(req: Request): Promise<Response> {
         analytics: parsedAnalytics[idx] ?? null,
       })),
     );
+
+    // (explosives already computed above, before the prompt-cap logic.)
 
     // Quarter tendencies: how does their play-calling shift by quarter?
     const quarterTendencies = aggregateQuarterTendencies(
@@ -402,6 +440,11 @@ ${quarterTendencies.map((q) => {
 }).join('\n')}\n`
       : '';
 
+    const explosiveHeader = explosives.length > 0
+      ? `\nBiggest outlier plays (top gains + top losses, by magnitude):
+${explosives.map((e) => `  [${e.playId}] ${e.blurb}`).join('\n')}\n`
+      : '';
+
     const routeCoverageHeader = routeVsCoverage.length > 0
       ? `\nRoute concept × coverage heatmap (top cells, ≥2 samples each):
 ${routeVsCoverage.map((c) => {
@@ -436,7 +479,7 @@ ${situations.map((s) => {
 
     // Every header below this line works without field-space CV —
     // they use only analysis tags Claude already produces per play.
-    const analyticsHeader = `${cvHeader}${personnelHeader}${motionHeader}${quarterHeader}${routeCoverageHeader}${situationalHeader}`;
+    const analyticsHeader = `${cvHeader}${explosiveHeader}${personnelHeader}${motionHeader}${quarterHeader}${routeCoverageHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({

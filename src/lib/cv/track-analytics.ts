@@ -801,6 +801,94 @@ export function aggregateRouteVsCoverage(plays: RouteCovPlay[]): RouteVsCoverage
   return cells.slice(0, 8);
 }
 
+// ─── Explosive plays extraction ────────────────────────────
+
+export interface ExplosivePlay {
+  playId: string;
+  down?: number | null;
+  distance?: number | null;
+  quarter?: number | null;
+  formation?: string | null;
+  playType?: string | null;
+  gainLoss: number;
+  coverage?: string;
+  route?: string;
+  /** A one-liner describing the play in football terms. */
+  blurb: string;
+}
+
+interface ExplosiveInput {
+  id: string;
+  down?: number | null;
+  distance?: number | null;
+  quarter?: number | null;
+  formation?: string | null;
+  playType?: string | null;
+  playDirection?: string | null;
+  gainLoss?: number | null;
+  result?: string | null;
+  coverage?: string;
+  route?: string;
+}
+
+/**
+ * Extract the biggest single-play gains (≥15 yards) and losses (≤-7 yards).
+ * These are the outlier snaps that drive the game — coaches remember them
+ * and want the "why" broken down. Each comes with a short human blurb
+ * Claude can lift into a narrative ("42-yd gain on 3rd & 7, Cover 3,
+ * four verts beat to the boundary").
+ *
+ * Capped at 6 explosives total (3 gains, 3 losses) so the prompt stays
+ * lean. A game's biggest outliers are usually a handful anyway.
+ */
+export function extractExplosivePlays(plays: ExplosiveInput[]): ExplosivePlay[] {
+  const big = plays
+    .filter((p) => typeof p.gainLoss === 'number' && (p.gainLoss >= 15 || p.gainLoss <= -7))
+    .map((p) => ({
+      ...p,
+      gainLoss: p.gainLoss as number,
+    }));
+
+  // Split into gains and losses, rank each by magnitude, take top 3 of each.
+  const gains = big
+    .filter((p) => p.gainLoss >= 15)
+    .sort((a, b) => b.gainLoss - a.gainLoss)
+    .slice(0, 3);
+  const losses = big
+    .filter((p) => p.gainLoss <= -7)
+    .sort((a, b) => a.gainLoss - b.gainLoss)
+    .slice(0, 3);
+
+  const describe = (p: ExplosiveInput & { gainLoss: number }): string => {
+    const parts: string[] = [];
+    if (p.down && p.distance) parts.push(`${p.down}&${p.distance}`);
+    if (p.quarter) parts.push(`Q${p.quarter}`);
+    if (p.formation) parts.push(p.formation);
+    if (p.playType) parts.push(p.playType);
+    if (p.playDirection && p.playDirection !== 'N/A') parts.push(p.playDirection);
+    if (p.route && p.route !== 'N/A' && p.route !== 'unknown') parts.push(`${p.route}`);
+    if (p.coverage && p.coverage !== 'unknown') parts.push(`vs ${p.coverage}`);
+    const header = parts.join(' · ');
+    const outcome = p.gainLoss >= 0 ? `${p.gainLoss}-yd gain` : `${p.gainLoss}-yd loss`;
+    return `${header || 'play'} → ${outcome}${p.result ? ` (${p.result})` : ''}`;
+  };
+
+  const pack = (p: ExplosiveInput & { gainLoss: number }): ExplosivePlay => ({
+    playId: p.id,
+    down: p.down,
+    distance: p.distance,
+    quarter: p.quarter,
+    formation: p.formation,
+    playType: p.playType,
+    gainLoss: p.gainLoss,
+    coverage: p.coverage,
+    route: p.route,
+    blurb: describe(p),
+  });
+
+  return [...gains.map(pack), ...losses.map(pack)];
+}
+
 // ─── Quarter tendencies ────────────────────────────────────
 
 export interface QuarterTendency {

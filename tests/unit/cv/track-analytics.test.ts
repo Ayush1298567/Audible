@@ -20,6 +20,7 @@ import {
   aggregateRouteVsCoverage,
   computePlayAnalytics,
   computeSituationalTendencies,
+  extractExplosivePlays,
   minSeparation,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
@@ -1014,5 +1015,106 @@ describe('aggregateQuarterTendencies', () => {
       { quarter: 5, playType: 'Pass' },
     ];
     expect(aggregateQuarterTendencies(plays)).toEqual([]);
+  });
+});
+
+describe('extractExplosivePlays', () => {
+  it('returns empty for plays without explosive gains/losses', () => {
+    const plays = [
+      { id: 'a', playType: 'Pass', gainLoss: 4 },
+      { id: 'b', playType: 'Run', gainLoss: 2 },
+      { id: 'c', playType: 'Pass', gainLoss: -3 },
+    ];
+    expect(extractExplosivePlays(plays)).toEqual([]);
+  });
+
+  it('picks gains ≥15 yards and losses ≤-7 yards', () => {
+    const plays = [
+      { id: 'a', playType: 'Pass', gainLoss: 15 }, // qualifies as gain
+      { id: 'b', playType: 'Pass', gainLoss: 14 }, // just below threshold
+      { id: 'c', playType: 'Pass', gainLoss: -7 }, // qualifies as loss
+      { id: 'd', playType: 'Pass', gainLoss: -6 }, // just below
+    ];
+    const expl = extractExplosivePlays(plays);
+    const ids = expl.map((e) => e.playId).sort();
+    expect(ids).toEqual(['a', 'c']);
+  });
+
+  it('ranks gains by magnitude descending, losses by magnitude descending', () => {
+    const plays = [
+      { id: 'small-gain', gainLoss: 16, playType: 'Pass' },
+      { id: 'big-gain', gainLoss: 42, playType: 'Pass' },
+      { id: 'mid-gain', gainLoss: 25, playType: 'Pass' },
+      { id: 'small-loss', gainLoss: -8, playType: 'Pass' },
+      { id: 'big-loss', gainLoss: -15, playType: 'Pass' },
+    ];
+    const expl = extractExplosivePlays(plays);
+    expect(expl[0]?.playId).toBe('big-gain');
+    expect(expl[1]?.playId).toBe('mid-gain');
+    expect(expl[2]?.playId).toBe('small-gain');
+    expect(expl[3]?.playId).toBe('big-loss');
+    expect(expl[4]?.playId).toBe('small-loss');
+  });
+
+  it('caps at 3 gains and 3 losses', () => {
+    const plays = [
+      { id: 'g1', gainLoss: 50, playType: 'Pass' },
+      { id: 'g2', gainLoss: 40, playType: 'Pass' },
+      { id: 'g3', gainLoss: 30, playType: 'Pass' },
+      { id: 'g4', gainLoss: 20, playType: 'Pass' },
+      { id: 'l1', gainLoss: -20, playType: 'Pass' },
+      { id: 'l2', gainLoss: -15, playType: 'Pass' },
+      { id: 'l3', gainLoss: -10, playType: 'Pass' },
+      { id: 'l4', gainLoss: -8, playType: 'Pass' },
+    ];
+    const expl = extractExplosivePlays(plays);
+    expect(expl).toHaveLength(6);
+    expect(expl.filter((e) => e.gainLoss > 0)).toHaveLength(3);
+    expect(expl.filter((e) => e.gainLoss < 0)).toHaveLength(3);
+  });
+
+  it('produces a human-readable blurb with down, formation, coverage', () => {
+    const plays = [
+      {
+        id: 'p1',
+        down: 3,
+        distance: 7,
+        quarter: 2,
+        formation: 'Trips Rt',
+        playType: 'Pass',
+        playDirection: 'Right',
+        gainLoss: 42,
+        result: 'TD',
+        coverage: 'cover_3',
+        route: 'four_verts',
+      },
+    ];
+    const expl = extractExplosivePlays(plays);
+    expect(expl[0]?.blurb).toContain('3&7');
+    expect(expl[0]?.blurb).toContain('Q2');
+    expect(expl[0]?.blurb).toContain('Trips Rt');
+    expect(expl[0]?.blurb).toContain('four_verts');
+    expect(expl[0]?.blurb).toContain('cover_3');
+    expect(expl[0]?.blurb).toContain('42-yd gain');
+    expect(expl[0]?.blurb).toContain('TD');
+  });
+
+  it('hides "N/A" and "unknown" fields from the blurb', () => {
+    const plays = [
+      {
+        id: 'p1',
+        down: 1,
+        distance: 10,
+        formation: 'Shotgun',
+        playType: 'Pass',
+        playDirection: 'N/A',
+        gainLoss: 17,
+        coverage: 'unknown',
+        route: 'N/A',
+      },
+    ];
+    const expl = extractExplosivePlays(plays);
+    expect(expl[0]?.blurb).not.toContain('N/A');
+    expect(expl[0]?.blurb).not.toContain('unknown');
   });
 });
