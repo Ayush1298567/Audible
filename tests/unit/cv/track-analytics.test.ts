@@ -14,6 +14,7 @@ import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
   computePlayAnalytics,
+  computeSituationalTendencies,
   minSeparation,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
@@ -492,5 +493,109 @@ describe('aggregateMatchupsByDefender', () => {
     expect(noJersey).toBeDefined();
     expect(jersey24?.matchupCount).toBe(2);
     expect(noJersey?.matchupCount).toBe(2);
+  });
+});
+
+describe('computeSituationalTendencies', () => {
+  it('returns empty when there are no plays with down/distance', () => {
+    expect(computeSituationalTendencies([])).toEqual([]);
+    expect(
+      computeSituationalTendencies([
+        { down: null, distance: null, playType: 'Pass' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('buckets by down+distance and computes run/pass rates', () => {
+    // 5 plays on 3rd & long: 4 passes, 1 run
+    const plays = [
+      { down: 3, distance: 8, playType: 'Pass', gainLoss: 8 },
+      { down: 3, distance: 9, playType: 'Pass', gainLoss: 12 },
+      { down: 3, distance: 10, playType: 'Pass', gainLoss: 4 },
+      { down: 3, distance: 7, playType: 'Pass', gainLoss: 15 },
+      { down: 3, distance: 10, playType: 'Run', gainLoss: 3 },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    const thirdLong = buckets.find((b) => b.situation === '3rd & long');
+    expect(thirdLong).toBeDefined();
+    expect(thirdLong?.count).toBe(5);
+    expect(thirdLong?.passPct).toBe(80);
+    expect(thirdLong?.runPct).toBe(20);
+    expect(thirdLong?.avgYardsGained).toBeCloseTo(8.4, 1);
+  });
+
+  it('drops buckets with fewer than 3 plays (noise floor)', () => {
+    // Two 3rd-and-long plays → filtered
+    const plays = [
+      { down: 3, distance: 8, playType: 'Pass' },
+      { down: 3, distance: 9, playType: 'Pass' },
+    ];
+    expect(computeSituationalTendencies(plays)).toEqual([]);
+  });
+
+  it('identifies dominant coverage', () => {
+    const plays = [
+      { down: 3, distance: 8, playType: 'Pass', coverage: 'cover_3' },
+      { down: 3, distance: 9, playType: 'Pass', coverage: 'cover_3' },
+      { down: 3, distance: 10, playType: 'Pass', coverage: 'cover_3' },
+      { down: 3, distance: 7, playType: 'Pass', coverage: 'cover_2' },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    expect(buckets[0]?.dominantCoverage?.name).toBe('cover_3');
+    expect(buckets[0]?.dominantCoverage?.pct).toBe(75);
+  });
+
+  it('computes rotation rate from pre-snap vs post-snap', () => {
+    // 3 plays showing 2-high pre-snap, rotating to Cover 3 (single-high) post-snap.
+    // 1 play staying true 2-high (Cover 2). Rotation rate = 75%.
+    const plays = [
+      { down: 3, distance: 8, playType: 'Pass', preSnapRead: 'two_high', coverage: 'cover_3' },
+      { down: 3, distance: 9, playType: 'Pass', preSnapRead: 'two_high', coverage: 'cover_3' },
+      { down: 3, distance: 10, playType: 'Pass', preSnapRead: 'two_high', coverage: 'cover_3' },
+      { down: 3, distance: 7, playType: 'Pass', preSnapRead: 'two_high', coverage: 'cover_2' },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    expect(buckets[0]?.rotationPct).toBe(75);
+  });
+
+  it('separates short/medium/long by distance thresholds', () => {
+    const plays = [
+      { down: 1, distance: 2, playType: 'Run' }, // 1st & short
+      { down: 1, distance: 2, playType: 'Run' },
+      { down: 1, distance: 3, playType: 'Run' },
+      { down: 1, distance: 5, playType: 'Pass' }, // 1st & medium
+      { down: 1, distance: 6, playType: 'Pass' },
+      { down: 1, distance: 6, playType: 'Pass' },
+      { down: 1, distance: 10, playType: 'Pass' }, // 1st & long
+      { down: 1, distance: 9, playType: 'Pass' },
+      { down: 1, distance: 10, playType: 'Pass' },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    const labels = buckets.map((b) => b.situation).sort();
+    expect(labels).toEqual(['1st & long', '1st & medium', '1st & short']);
+  });
+
+  it('ignores pre-snap reads of "unknown" when computing rotation', () => {
+    // Every play has "unknown" pre-snap — rotation rate should be 0 (no samples)
+    const plays = [
+      { down: 3, distance: 8, playType: 'Pass', preSnapRead: 'unknown', coverage: 'cover_3' },
+      { down: 3, distance: 9, playType: 'Pass', preSnapRead: 'unknown', coverage: 'cover_3' },
+      { down: 3, distance: 10, playType: 'Pass', preSnapRead: 'unknown', coverage: 'cover_3' },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    expect(buckets[0]?.rotationPct).toBe(0);
+  });
+
+  it('ranks 3rd-down buckets ahead of 1st/2nd down', () => {
+    const plays = [
+      { down: 1, distance: 10, playType: 'Pass' },
+      { down: 1, distance: 9, playType: 'Pass' },
+      { down: 1, distance: 10, playType: 'Pass' },
+      { down: 3, distance: 8, playType: 'Pass' },
+      { down: 3, distance: 9, playType: 'Pass' },
+      { down: 3, distance: 10, playType: 'Pass' },
+    ];
+    const buckets = computeSituationalTendencies(plays);
+    expect(buckets[0]?.situation.startsWith('3rd')).toBe(true);
   });
 });

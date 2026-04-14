@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   aggregateByPlayType,
   aggregateMatchupsByDefender,
+  computeSituationalTendencies,
   type PlayAnalytics,
 } from '@/lib/cv/track-analytics';
 import { withProgramContext } from '@/lib/db/client';
@@ -103,6 +104,12 @@ Rules:
    track IDs the coach should watch — typically the offense/defense pair
    from the key matchup (trackIds in the matchups array). This is what
    visually lights up on the clip as the coach watches.
+9. USE THE SITUATIONAL HEADER. The down & distance rollups tell you
+   what they DO in a given situation — run/pass mix, dominant coverage,
+   post-snap rotation rate. Look for extremes: 80%+ run/pass tilts,
+   40%+ rotation rates, or strong coverage tendencies by down. Tie
+   these to concrete calls ("on 3rd & long they rotate to Cover 3 60%
+   of the time — call post-wheel with a late-over tag").
 
 Be ruthless. Don't pad the list. 3 great insights beat 5 mediocre ones.`;
 
@@ -231,6 +238,19 @@ export async function POST(req: Request): Promise<Response> {
       })),
     );
 
+    // Situational tendencies: how do they play by down & distance?
+    const situations = computeSituationalTendencies(
+      allPlays.map((p) => ({
+        down: p.down,
+        distance: p.distance,
+        playType: p.playType,
+        gainLoss: p.gainLoss,
+        coverage: (p.coachOverride as { aiCoverage?: string })?.aiCoverage,
+        preSnapRead: (p.coachOverride as { aiPreSnapRead?: string })?.aiPreSnapRead,
+        pressure: (p.coachOverride as { aiPressure?: string })?.aiPressure,
+      })),
+    );
+
     // Roll up every matchup by the defender's jersey+role so we can point
     // Claude at specific exploitable defenders instead of just "the corner".
     const defenderTendencies = aggregateMatchupsByDefender(
@@ -245,7 +265,23 @@ ${defenderTendencies.map((d) => {
 }).join('\n')}\n`
       : '';
 
-    const analyticsHeader =
+    const situationalHeader = situations.length > 0
+      ? `\nSituational tendencies (by down & distance):
+${situations.map((s) => {
+  const cov = s.dominantCoverage
+    ? `, ${s.dominantCoverage.name} ${s.dominantCoverage.pct}%`
+    : '';
+  const pressure = s.dominantPressure && s.dominantPressure.pct >= 50
+    ? `, ${s.dominantPressure.name} ${s.dominantPressure.pct}%`
+    : '';
+  const rotation = s.rotationPct >= 30
+    ? `, rotates post-snap ${s.rotationPct}%`
+    : '';
+  return `  ${s.situation} (n=${s.count}): ${s.passPct}% pass / ${s.runPct}% run${cov}${pressure}${rotation}, avg ${s.avgYardsGained}yd`;
+}).join('\n')}\n`
+      : '';
+
+    const cvHeader =
       aggregated.fieldRegisteredPlays > 0
         ? `\nCV Analytics Summary (from ${aggregated.fieldRegisteredPlays} field-registered plays):
   Avg peak speed: ${aggregated.avgPeakSpeedYps.toFixed(1)} yds/s
@@ -253,6 +289,9 @@ ${defenderTendencies.map((d) => {
   Avg deepest route: ${aggregated.avgMaxDepthYards.toFixed(1)} yds downfield
   By play type: ${aggregated.byPlayType.map((t) => `${t.playType}(n=${t.count}, peak=${t.avgPeakSpeedYps.toFixed(1)}yps, depth=${t.avgMaxDepthYards?.toFixed(1) ?? '?'}yds)`).join(', ')}${defenderHeader}`
         : '';
+
+    // Situational header works without field-space CV (needs only analysis tags).
+    const analyticsHeader = `${cvHeader}${situationalHeader}`;
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({

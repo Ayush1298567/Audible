@@ -457,6 +457,158 @@ export function aggregateByPlayType(
   };
 }
 
+// ─── Situational tendencies (down × distance) ──────────────
+
+export interface SituationalBucket {
+  /** Human label: "3rd & long" etc. */
+  situation: string;
+  /** How many plays landed in this bucket. */
+  count: number;
+  /** Pass percentage (0-100). */
+  passPct: number;
+  /** Run percentage (0-100). */
+  runPct: number;
+  /** Most common coverage (actual coverageShell). */
+  dominantCoverage?: { name: string; pct: number };
+  /** Pre-snap → post-snap coverage rotation rate (0-100). */
+  rotationPct: number;
+  /** Dominant pressure type, if consistent. */
+  dominantPressure?: { name: string; pct: number };
+  /** Average yards gained per play in this situation. */
+  avgYardsGained: number;
+}
+
+interface SituationalPlay {
+  down?: number | null;
+  distance?: number | null;
+  playType?: string | null;
+  gainLoss?: number | null;
+  coverage?: string;
+  preSnapRead?: string;
+  pressure?: string;
+}
+
+function situationLabel(down: number, distance: number): string | null {
+  if (down < 1 || down > 4) return null;
+  const ordinal = ['1st', '2nd', '3rd', '4th'][down - 1];
+  if (distance <= 3) return `${ordinal} & short`;
+  if (distance <= 6) return `${ordinal} & medium`;
+  if (distance <= 10) return `${ordinal} & long`;
+  return `${ordinal} & XL`;
+}
+
+/**
+ * Determine whether the defense rotated from pre-snap to post-snap.
+ *
+ * Not every "different label" is a real rotation — e.g. pre=unknown vs
+ * post=cover_3 is just "we couldn't tell pre-snap." Only count as a
+ * rotation when BOTH reads are present and map to different shell
+ * families.
+ */
+function isRotation(preSnap?: string, postSnap?: string): boolean {
+  if (!preSnap || !postSnap) return false;
+  if (preSnap === 'unknown' || postSnap === 'unknown') return false;
+  // Normalize pre-snap "looks" to their natural post-snap equivalents
+  const preFamily = preSnap === 'two_high' ? 'two_high'
+    : preSnap === 'single_high' ? 'single_high'
+    : preSnap === 'cover_0_look' ? 'cover_0'
+    : 'other';
+  // Cover 2/Quarters/Cover 4 = two_high family. Cover 1/3 = single_high.
+  const postFamily = postSnap.startsWith('cover_2') || postSnap === 'quarters' || postSnap === 'cover_4'
+    ? 'two_high'
+    : postSnap === 'cover_1' || postSnap === 'cover_3'
+    ? 'single_high'
+    : postSnap === 'cover_0'
+    ? 'cover_0'
+    : 'other';
+  if (preFamily === 'other' || postFamily === 'other') return false;
+  return preFamily !== postFamily;
+}
+
+/**
+ * Bucket plays by down × distance and compute run/pass rate, coverage
+ * dominance, pre-snap → post-snap rotation rate, and average yardage
+ * for each bucket. Only keeps buckets with ≥ 3 plays so a single weird
+ * call doesn't become a "tendency."
+ */
+export function computeSituationalTendencies(plays: SituationalPlay[]): SituationalBucket[] {
+  type Raw = {
+    playTypes: string[];
+    coverages: string[];
+    pressures: string[];
+    rotations: number; // count
+    rotationsSamples: number;
+    yards: number[];
+  };
+
+  const buckets = new Map<string, Raw>();
+
+  for (const p of plays) {
+    if (!p.down || !p.distance) continue;
+    const label = situationLabel(p.down, p.distance);
+    if (!label) continue;
+    let b = buckets.get(label);
+    if (!b) {
+      b = { playTypes: [], coverages: [], pressures: [], rotations: 0, rotationsSamples: 0, yards: [] };
+      buckets.set(label, b);
+    }
+    if (p.playType) b.playTypes.push(p.playType);
+    if (p.coverage) b.coverages.push(p.coverage);
+    if (p.pressure) b.pressures.push(p.pressure);
+    if (typeof p.gainLoss === 'number') b.yards.push(p.gainLoss);
+    if (p.coverage && p.preSnapRead) {
+      b.rotationsSamples++;
+      if (isRotation(p.preSnapRead, p.coverage)) b.rotations++;
+    }
+  }
+
+  const avg = (a: number[]): number => (a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const dominant = (a: string[]): { name: string; pct: number } | undefined => {
+    if (a.length === 0) return undefined;
+    const counts = new Map<string, number>();
+    for (const v of a) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best: [string, number] | null = null;
+    for (const entry of counts) {
+      if (!best || entry[1] > best[1]) best = entry;
+    }
+    if (!best) return undefined;
+    return { name: best[0], pct: Math.round((best[1] / a.length) * 100) };
+  };
+
+  const result: SituationalBucket[] = [];
+  for (const [situation, b] of buckets) {
+    if (b.playTypes.length < 3) continue;
+    const passes = b.playTypes.filter((t) => /pass|screen|play action|rpo/i.test(t)).length;
+    const runs = b.playTypes.filter((t) => /run|qb run/i.test(t)).length;
+    const total = b.playTypes.length;
+    result.push({
+      situation,
+      count: total,
+      passPct: Math.round((passes / total) * 100),
+      runPct: Math.round((runs / total) * 100),
+      dominantCoverage: dominant(b.coverages),
+      rotationPct: b.rotationsSamples > 0
+        ? Math.round((b.rotations / b.rotationsSamples) * 100)
+        : 0,
+      dominantPressure: dominant(b.pressures),
+      avgYardsGained: Number(avg(b.yards).toFixed(1)),
+    });
+  }
+
+  // Sort by situational importance roughly — 3rd downs matter most,
+  // then 1st down (base play calls), then 2nd.
+  const ord = (s: string): number => {
+    if (s.startsWith('3rd')) return 0;
+    if (s.startsWith('4th')) return 1;
+    if (s.startsWith('1st')) return 2;
+    if (s.startsWith('2nd')) return 3;
+    return 4;
+  };
+  result.sort((a, b) => ord(a.situation) - ord(b.situation));
+
+  return result;
+}
+
 // ─── Opponent-level matchup aggregation ─────────────────────
 
 /**
