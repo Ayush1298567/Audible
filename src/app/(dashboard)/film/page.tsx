@@ -17,7 +17,7 @@ import { DrawingCanvas } from '@/components/film/drawing-canvas';
 import { CorrectableTag } from '@/components/film/tag-correction';
 import { CollectionsPanel } from '@/components/film/collections-panel';
 import { YouTubeImport } from '@/components/film/youtube-import';
-import { AnalyzeYoutube } from '@/components/film/analyze-youtube';
+import { UploadVideo } from '@/components/film/upload-video';
 
 interface Play {
   id: string;
@@ -196,11 +196,11 @@ export default function FilmRoomPage() {
         <div className="flex gap-1 rounded-lg border border-slate-700/50 bg-slate-900/60 p-0.5 w-fit">
           <button type="button" onClick={() => setImportMode('auto')}
             className={`px-3 py-1.5 rounded-md font-display text-[10px] uppercase tracking-wider transition-all ${importMode === 'auto' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
-            AI Auto-Analyze
+            Upload & AI Analyze
           </button>
           <button type="button" onClick={() => setImportMode('manual')}
             className={`px-3 py-1.5 rounded-md font-display text-[10px] uppercase tracking-wider transition-all ${importMode === 'manual' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
-            Manual Mark
+            YouTube Manual
           </button>
           <button type="button" onClick={() => setImportMode('hudl')}
             className={`px-3 py-1.5 rounded-md font-display text-[10px] uppercase tracking-wider transition-all ${importMode === 'hudl' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
@@ -208,9 +208,9 @@ export default function FilmRoomPage() {
           </button>
         </div>
 
-        {/* Auto-analyze (runs in Vercel Sandbox) */}
+        {/* Upload video + AI analyze */}
         {importMode === 'auto' && programId && (
-          <AnalyzeYoutube
+          <UploadVideo
             programId={programId}
             games={games.map(g => ({ id: g.id, opponentName: g.opponentName }))}
             onComplete={() => void loadPlays()}

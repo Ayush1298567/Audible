@@ -30,7 +30,7 @@
     "@ffprobe-installer/ffprobe": "^2.1.0",
     "@react-pdf/renderer": "^4.4.1",
     "@vercel/analytics": "^2.0.0",
-    "@vercel/blob": "^2.0.0",
+    "@vercel/blob": "^2.3.3",
     "@vercel/functions": "^3.0.0",
     "@vercel/sandbox": "^1.9.3",
     "@vercel/speed-insights": "^2.0.0",

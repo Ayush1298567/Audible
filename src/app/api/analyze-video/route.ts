@@ -7,13 +7,25 @@ import { z } from 'zod';
 
 export const maxDuration = 300;
 
+/**
+ * Analyze an uploaded video from Vercel Blob.
+ *
+ * Flow:
+ *   1. Spin up a Vercel Sandbox (has ffmpeg access)
+ *   2. Download the video from Blob URL into the sandbox
+ *   3. Extract frames at intervals with ffmpeg
+ *   4. Send each frame to Claude Sonnet vision
+ *   5. Claude detects live plays and tags them
+ *   6. Save plays to database
+ */
+
 const requestSchema = z.object({
   programId: z.string().uuid(),
   gameId: z.string().uuid(),
-  youtubeUrl: z.string().url(),
+  blobUrl: z.string().url(),
   startSeconds: z.number().int().min(0).default(0),
-  durationSeconds: z.number().int().min(30).max(600).default(300),
-  sampleInterval: z.number().int().min(15).max(60).default(30),
+  durationSeconds: z.number().int().min(30).max(3600).default(300),
+  sampleInterval: z.number().int().min(10).max(60).default(25),
 });
 
 const frameAnalysisSchema = z.object({
@@ -33,15 +45,15 @@ const frameAnalysisSchema = z.object({
 });
 
 const ANALYSIS_PROMPT = `You are an expert football film analyst.
-Analyze this single frame from game footage:
-1. Is this a LIVE play (teams lined up/in motion)? Or sideline/commercial/replay?
+Analyze this frame from game footage:
+1. Is this a LIVE play (teams lined up/in motion)? Or sideline/commercial/replay/dead ball?
 2. If live: formation, personnel, play type, direction
-3. Defense: coverage shell (read the safeties)
-4. Read scoreboard for down & distance
+3. Defense: coverage shell (read the safeties — one high = C1/C3, two high = C2/C4)
+4. Read the scoreboard for down & distance
 Return Unknown + low confidence when you can't see clearly. Don't guess.`;
 
 export async function POST(req: Request): Promise<Response> {
-  const span = beginSpan({ route: '/api/analyze-youtube', method: 'POST' }, req);
+  const span = beginSpan({ route: '/api/analyze-video', method: 'POST' }, req);
 
   let sandbox: Sandbox | null = null;
 
@@ -49,62 +61,71 @@ export async function POST(req: Request): Promise<Response> {
     const body = await req.json();
     const input = requestSchema.parse(body);
 
-    const videoIdMatch = input.youtubeUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/))([a-zA-Z0-9_-]{11})/);
-    const videoId = videoIdMatch?.[1] ?? '';
-
-    // Step 1: Create a Vercel Sandbox (has real IP, can use yt-dlp)
+    // Step 1: Create sandbox
     sandbox = await Sandbox.create({
-      timeout: 280_000, // 280s, leaving buffer for cleanup
+      runtime: 'node22',
+      timeout: 280_000,
     });
 
-    // Step 2: Install yt-dlp in the sandbox
-    await sandbox.runCommand({
+    // Step 2: Install ffmpeg (static binary) + download video
+    const setupAndDownload = await sandbox.runCommand({
       cmd: 'bash',
-      args: ['-c', 'pip install -q yt-dlp || apt-get install -y yt-dlp || curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp'],
+      args: ['-c', `
+        set -e
+        sudo dnf install -y xz >/dev/null 2>&1
+        curl -sL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /tmp
+        sudo mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/
+        curl -sL "${input.blobUrl}" -o /tmp/video.mp4
+        ls -la /tmp/video.mp4
+        ffmpeg -i /tmp/video.mp4 -hide_banner 2>&1 | grep Duration | head -1
+      `],
+      sudo: true,
     });
 
-    // Step 3: Get video stream URL
-    const streamCmd = await sandbox.runCommand({
-      cmd: 'yt-dlp',
-      args: ['-g', '-f', 'best[height<=480]', input.youtubeUrl],
-    });
-
-    const streamUrl = (await streamCmd.stdout()).trim().split('\n')[0] ?? '';
-    if (!streamUrl) {
-      throw new Error('Failed to get video stream URL');
+    if (setupAndDownload.exitCode !== 0) {
+      const err = await setupAndDownload.stderr();
+      throw new Error(`Setup failed: ${err.slice(0, 200)}`);
     }
 
-    // Step 4: Extract frames at intervals
+    // Step 3: Extract frames
     const timestamps: number[] = [];
     for (let t = input.startSeconds; t < input.startSeconds + input.durationSeconds; t += input.sampleInterval) {
       timestamps.push(t);
     }
 
+    // Build a single ffmpeg command that extracts multiple frames
+    const frameArgs: string[] = ['-y'];
+    const framePaths: string[] = [];
+    for (const t of timestamps) {
+      const path = `/tmp/f${t}.jpg`;
+      framePaths.push(path);
+      frameArgs.push('-ss', String(t), '-i', '/tmp/video.mp4', '-frames:v', '1', '-q:v', '3', '-vf', 'scale=640:-1', '-update', '1', path);
+    }
+
+    // Extract frames one at a time (simpler than batched) — could optimize
+    for (const t of timestamps) {
+      await sandbox.runCommand({
+        cmd: 'ffmpeg',
+        args: ['-y', '-ss', String(t), '-i', '/tmp/video.mp4',
+          '-frames:v', '1', '-q:v', '3', '-vf', 'scale=640:-1',
+          '-update', '1', `/tmp/f${t}.jpg`],
+      });
+    }
+
+    // Step 4: Read frames as base64
     const frames: Array<{ timestamp: number; base64: string }> = [];
     for (const t of timestamps) {
-      const framePath = `/tmp/frame-${t}.jpg`;
-      const extractCmd = await sandbox.runCommand({
-        cmd: 'ffmpeg',
-        args: [
-          '-y', '-ss', String(t), '-i', streamUrl,
-          '-frames:v', '1', '-q:v', '3', '-vf', 'scale=640:-1',
-          '-update', '1', framePath,
-        ],
-      });
-
-      if (extractCmd.exitCode === 0) {
-        const catCmd = await sandbox.runCommand({
-          cmd: 'base64',
-          args: [framePath],
-        });
-        const b64 = (await catCmd.stdout()).replace(/\s/g, '');
-        if (b64) {
-          frames.push({ timestamp: t, base64: b64 });
-        }
+      const buf = await sandbox.readFileToBuffer({ path: `/tmp/f${t}.jpg` });
+      if (buf) {
+        frames.push({ timestamp: t, base64: buf.toString('base64') });
       }
     }
 
-    // Step 5: Analyze each frame with Claude
+    // Clean up sandbox early (don't wait to free resources)
+    await sandbox.stop().catch(() => {});
+    sandbox = null;
+
+    // Step 5: Send each frame to Claude
     const detectedPlays: Array<{
       timestamp: number;
       formation: string;
@@ -152,16 +173,12 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    // Step 6: Save plays to DB
+    // Step 6: Save plays
     let saved = 0;
     await withProgramContext(input.programId, async (tx) => {
       for (let i = 0; i < detectedPlays.length; i++) {
         const play = detectedPlays[i];
         if (!play) continue;
-
-        const embedUrl = videoId
-          ? `https://www.youtube.com/embed/${videoId}?start=${Math.max(0, Math.floor(play.timestamp - 2))}&end=${Math.floor(play.timestamp + 8)}&autoplay=1`
-          : null;
 
         await tx.insert(plays).values({
           programId: input.programId,
@@ -177,7 +194,7 @@ export async function POST(req: Request): Promise<Response> {
           playDirection: play.playDirection !== 'Unknown' ? play.playDirection : null,
           clipStartSeconds: play.timestamp,
           clipEndSeconds: play.timestamp + 8,
-          clipBlobKey: embedUrl,
+          clipBlobKey: input.blobUrl,
           status: 'ready',
           coachOverride: {
             aiCoverage: play.coverage,
@@ -200,11 +217,10 @@ export async function POST(req: Request): Promise<Response> {
     });
   } catch (error) {
     span.fail(error);
-    const msg = error instanceof Error ? error.message : 'Failed';
-    return Response.json({ error: msg }, { status: 500 });
-  } finally {
     if (sandbox) {
       await sandbox.stop().catch(() => {});
     }
+    const msg = error instanceof Error ? error.message : 'Failed';
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
