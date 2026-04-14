@@ -569,14 +569,26 @@ export default function FilmRoomPage() {
               </div>
 
               <TagRow label="Coverage" value={selectedPlay.coachOverride.aiCoverage?.replace(/_/g, ' ')} highlight />
-              {selectedPlay.coachOverride.aiDefenseFormation && (
-                <TagRow label="Defense" value={selectedPlay.coachOverride.aiDefenseFormation} />
+              {(selectedPlay.coachOverride.aiDefensiveFront ?? selectedPlay.coachOverride.aiDefenseFormation) && (
+                <TagRow label="Defense" value={selectedPlay.coachOverride.aiDefensiveFront ?? selectedPlay.coachOverride.aiDefenseFormation} />
               )}
               {selectedPlay.coachOverride.aiPersonnel && (
                 <TagRow label="Personnel" value={selectedPlay.coachOverride.aiPersonnel} />
               )}
-              {selectedPlay.coachOverride.aiPressure && (
+              {selectedPlay.coachOverride.aiPreSnapRead && (
+                <TagRow label="Pre-Snap Read" value={selectedPlay.coachOverride.aiPreSnapRead?.replace(/_/g, ' ')} />
+              )}
+              {selectedPlay.coachOverride.aiPressure && selectedPlay.coachOverride.aiPressure !== 'no_pressure' && (
                 <TagRow label="Pressure" value={selectedPlay.coachOverride.aiPressure?.replace(/_/g, ' ')} />
+              )}
+              {selectedPlay.coachOverride.aiRouteConcept && selectedPlay.coachOverride.aiRouteConcept !== 'N/A' && (
+                <TagRow label="Route Concept" value={selectedPlay.coachOverride.aiRouteConcept?.replace(/_/g, ' ')} />
+              )}
+              {selectedPlay.coachOverride.aiRunGap && selectedPlay.coachOverride.aiRunGap !== 'N/A' && (
+                <TagRow label="Run Gap" value={selectedPlay.coachOverride.aiRunGap?.replace(/_/g, ' ')} />
+              )}
+              {selectedPlay.coachOverride.aiBlockingScheme && selectedPlay.coachOverride.aiBlockingScheme !== 'N/A' && (
+                <TagRow label="Blocking" value={selectedPlay.coachOverride.aiBlockingScheme?.replace(/_/g, ' ')} />
               )}
 
               {selectedPlay.coachOverride.aiReasoning && (
@@ -589,10 +601,15 @@ export default function FilmRoomPage() {
 
               {selectedPlay.coachOverride.aiObservations && (
                 <div className="pt-2 border-t border-slate-800/50">
-                  <p className="font-display text-[10px] uppercase tracking-widest text-slate-500 mb-1">Key Observations</p>
-                  <p className="text-[10px] text-slate-400 leading-relaxed">
-                    {selectedPlay.coachOverride.aiObservations}
-                  </p>
+                  <p className="font-display text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Key Observations</p>
+                  <ul className="space-y-1">
+                    {selectedPlay.coachOverride.aiObservations.split(/\s*\|\s*/).filter(Boolean).map((obs, i) => (
+                      <li key={i} className="flex gap-1.5 text-[11px] text-slate-400 leading-relaxed">
+                        <span className="text-cyan-400/60 shrink-0">•</span>
+                        <span>{obs}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
