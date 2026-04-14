@@ -100,6 +100,22 @@ export interface PlayAnalytics {
   keyMatchups?: KeyMatchup[];
 }
 
+// ─── Shared helpers ─────────────────────────────────────────
+
+/**
+ * Median of a numeric array. Robust to outliers where mean is not —
+ * used by the trust-tier check so a single bad play doesn't flag a
+ * defender who usually covers well as a "tendency."
+ */
+function median(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+    : (sorted[mid] ?? 0);
+}
+
 // ─── Per-track math ─────────────────────────────────────────
 
 function dist(a: TrackPoint, b: TrackPoint, fieldSpace: boolean): number {
@@ -1224,10 +1240,18 @@ export function aggregateMatchupsByOffense(
     const meanConf = avg(b.confidences);
     const gameCount = b.gameIds.size;
     const hasCrossGame = singleGameInput || gameCount >= 2;
+    // Same four-signal rule as the defender side. For offensive playmakers,
+    // "signal magnitude" is the separation THEY CREATE — a WR whose median
+    // separation is 1.5yd isn't a weapon, he's getting covered.
+    const medianSep = median(b.seps);
     let trust: 'high' | 'medium' | 'low';
-    if (b.speeds.length >= 4 && meanConf >= 0.7 && hasCrossGame) trust = 'high';
-    else if (b.speeds.length >= 3 && meanConf >= 0.5) trust = 'medium';
-    else trust = 'low';
+    if (b.speeds.length >= 4 && meanConf >= 0.7 && hasCrossGame && medianSep >= 2.5) {
+      trust = 'high';
+    } else if (b.speeds.length >= 3 && meanConf >= 0.5 && medianSep >= 1.8) {
+      trust = 'medium';
+    } else {
+      trust = 'low';
+    }
 
     tendencies.push({
       jersey: b.jersey,
@@ -1274,6 +1298,15 @@ export function aggregateMatchupsByDefender(
     trackIds: string[];
     confidences: number[];
     gameIds: Set<string>;
+    /**
+     * Paired gameIds — for each play in this bucket, the (off-jersey,
+     * game) pairing that contributed. Used to detect OCR cross-pollution:
+     * a real tendency has the SAME off↔def pairing showing up in multiple
+     * games. OCR errors produce plays with an inconsistent off-jersey
+     * and the wrong def-jersey — which means the defender bucket gets
+     * "cross-game coverage" but from unrelated offensive players.
+     */
+    pairingGames: Map<string, Set<string>>;
   };
 
   const buckets = new Map<string, Bucket>();
@@ -1282,14 +1315,8 @@ export function aggregateMatchupsByDefender(
     if (!p.analytics?.keyMatchups) continue;
     for (const m of p.analytics.keyMatchups) {
       // Drop low-confidence matchups before they can pollute the rollup.
-      // A 0.3-confidence matchup means one of the four signals (track quality,
-      // role, jersey ×2) is shaky enough that this is more "anonymous noise"
-      // than "CB #24 gave up X yards." We keep only matchups we trust.
       if (m.confidence < 0.4) continue;
 
-      // For NAMED tendencies (the "CB #24" bucket vs the "CB unknown" bucket),
-      // jersey OCR confidence has to be high — otherwise mis-reads from
-      // multiple plays land in the same bogus bucket.
       const useJersey = m.defense.jersey !== undefined;
       const key = useJersey
         ? `${m.defense.role}#${m.defense.jersey}`
@@ -1306,6 +1333,7 @@ export function aggregateMatchupsByDefender(
           trackIds: [],
           confidences: [],
           gameIds: new Set(),
+          pairingGames: new Map(),
         };
         buckets.set(key, b);
       }
@@ -1315,6 +1343,14 @@ export function aggregateMatchupsByDefender(
       b.trackIds.push(m.defense.trackId);
       b.confidences.push(m.confidence);
       if (p.gameId) b.gameIds.add(p.gameId);
+
+      // Track which games this specific off↔def pairing appeared in.
+      const offKey = m.offense.jersey ?? `anon-${m.offense.role}`;
+      if (p.gameId) {
+        const existing = b.pairingGames.get(offKey) ?? new Set<string>();
+        existing.add(p.gameId);
+        b.pairingGames.set(offKey, existing);
+      }
     }
   }
 
@@ -1335,14 +1371,40 @@ export function aggregateMatchupsByDefender(
     const meanConf = avg(b.confidences);
     const gameCount = b.gameIds.size;
 
-    // Trust tier — high requires cross-game evidence UNLESS input was
-    // single-game (can't penalize for what wasn't available). A tendency
-    // seen in only 1 of 3 games gets demoted to "medium" at best.
+    // Trust tier — combines FIVE signals:
+    //   1. Sample count (≥4 for high)
+    //   2. Reading confidence (≥0.7 for high)
+    //   3. Cross-game evidence — but specifically, the same off↔def
+    //      PAIRING showing up in ≥2 games. A defender whose bucket is
+    //      cross-game-present because of OCR cross-pollution (random
+    //      plays mis-labeled into this defender's bucket) would have
+    //      every pairing show up in only 1 game. Real tendencies have
+    //      a stable pairing.
+    //   4. Signal magnitude via MEDIAN separation (not mean) — robust
+    //      to a single bad play pulling an average defender into
+    //      "tendency" status.
+    const medianSep = median(b.seps);
+    // Find the best-represented pairing's game count — this is how
+    // many distinct games the dominant off↔def pairing appeared in.
+    let maxPairingGames = 0;
+    for (const games of b.pairingGames.values()) {
+      if (games.size > maxPairingGames) maxPairingGames = games.size;
+    }
+    const hasCrossGamePairing = singleGameInput || maxPairingGames >= 2;
+
     let trust: 'high' | 'medium' | 'low';
-    const hasCrossGame = singleGameInput || gameCount >= 2;
-    if (b.seps.length >= 4 && meanConf >= 0.7 && hasCrossGame) trust = 'high';
-    else if (b.seps.length >= 3 && meanConf >= 0.5) trust = 'medium';
-    else trust = 'low';
+    if (
+      b.seps.length >= 4 &&
+      meanConf >= 0.7 &&
+      hasCrossGamePairing &&
+      medianSep >= 2.5
+    ) {
+      trust = 'high';
+    } else if (b.seps.length >= 3 && meanConf >= 0.5 && medianSep >= 1.8) {
+      trust = 'medium';
+    } else {
+      trust = 'low';
+    }
 
     tendencies.push({
       jersey: b.jersey,
