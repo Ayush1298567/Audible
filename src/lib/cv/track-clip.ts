@@ -15,7 +15,7 @@ import {
   applyHomography,
   type CalibrationResult,
   calibrateFieldFromClip,
-  computeHomographyDLT,
+  robustHomographyDLT,
 } from './field-homography';
 import { applyJerseysToTracks, ocrJerseysForTracks } from './jersey-ocr';
 import { detectPeopleInFrames } from './player-detector';
@@ -198,30 +198,38 @@ export async function trackPlayersInClip(
         const correspondences = landmarks.map((l) => ({
           pixel: { px: l.px, py: l.py },
           field: { fx: l.fx, fy: l.fy },
+          description: l.description,
         }));
-        const H = computeHomographyDLT(correspondences);
-        if (H) {
-          // Reprojection error check — reject bad calibrations.
-          // Tightened from 8yd → 4yd. An 8-yard calibration error meant
-          // players' field positions could be off by a whole defensive
-          // shift — all the role-inference and off-field logic become
-          // unreliable. 4yd is the boundary between "usable" and
-          // "actively misleading" for coaching decisions.
+
+        // Robust fit with leave-one-out outlier rejection. If Claude put
+        // wrong field coords on one landmark (e.g. labeled the painted
+        // "40" as fx=40 when the play is going the other direction, so
+        // it's actually the 60 from the near goal), that landmark gets
+        // dropped here before it can skew the whole homography.
+        const robust = robustHomographyDLT(correspondences);
+        if (robust) {
           let sum = 0;
-          for (const c of correspondences) {
-            const proj = applyHomography(c.pixel, H);
+          for (const c of robust.inliers) {
+            const proj = applyHomography(c.pixel, robust.homography);
             if (!proj) continue;
-            const dx = proj.fx - c.field.fx;
-            const dy = proj.fy - c.field.fy;
-            sum += Math.sqrt(dx * dx + dy * dy);
+            sum += Math.sqrt(
+              (proj.fx - c.field.fx) ** 2 + (proj.fy - c.field.fy) ** 2,
+            );
           }
-          const err = sum / correspondences.length;
+          const err = sum / robust.inliers.length;
           if (err <= 4) {
+            if (robust.outliers.length > 0) {
+              console.log('calibration_precomputed_dropped_outliers', {
+                kept: robust.inliers.length,
+                dropped: robust.outliers.length,
+                finalError: Number(err.toFixed(2)),
+              });
+            }
             calibration = {
-              homography: H,
-              landmarks: landmarks.map((l) => ({
-                pixel: { px: l.px, py: l.py },
-                field: { fx: l.fx, fy: l.fy },
+              homography: robust.homography,
+              landmarks: robust.inliers.map((l) => ({
+                pixel: l.pixel,
+                field: l.field,
                 description: l.description ?? '',
               })),
               reprojectionError: err,

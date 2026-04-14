@@ -138,6 +138,117 @@ export function applyHomography(point: PixelPoint, H: Homography): FieldPoint | 
   return { fx, fy };
 }
 
+/**
+ * Exhaustive RANSAC homography fit with outlier rejection.
+ *
+ * Claude sometimes picks a landmark with correct pixel coords but the
+ * WRONG field label — e.g. it sees "40" painted on the field and puts
+ * fx=40 when the play is actually going the other direction, so the
+ * "40" is the 60-yard line from the near goal. That single bad landmark
+ * drags the whole homography into a consistent-but-wrong fit.
+ *
+ * Iterative refinement (LSQ-drop-worst) fails here because when LSQ
+ * spreads error across N points, the actually-corrupted point may not
+ * have the max residual — a clean corner can look "worst." Dropping
+ * clean points progressively leads to a confident but wrong fit.
+ *
+ * RANSAC-style approach (deterministic for N ≤ 8):
+ *  1. Enumerate every 4-subset of the correspondences.
+ *  2. For each subset, fit an exact 4-point homography.
+ *  3. Count global inliers: correspondences whose reprojection error
+ *     through THIS H is below the threshold.
+ *  4. The winning subset is the one with the MOST inliers. Ties broken
+ *     by lowest mean-error on inliers.
+ *  5. Refit via LSQ using all inliers from the winning subset.
+ *
+ * Returns null if no 4-subset yields ≥4 inliers.
+ */
+export function robustHomographyDLT(
+  correspondences: Array<{ pixel: PixelPoint; field: FieldPoint; description?: string }>,
+  outlierThresholdYards = 6,
+): { homography: Homography; inliers: typeof correspondences; outliers: typeof correspondences } | null {
+  if (correspondences.length < 4) return null;
+
+  // Exactly 4 — no RANSAC possible, just fit.
+  if (correspondences.length === 4) {
+    const H = computeHomographyDLT(correspondences);
+    if (!H) return null;
+    return { homography: H, inliers: correspondences, outliers: [] };
+  }
+
+  const errOf = (H: Homography, c: (typeof correspondences)[number]): number => {
+    const proj = applyHomography(c.pixel, H);
+    if (!proj) return Number.POSITIVE_INFINITY;
+    return Math.sqrt((proj.fx - c.field.fx) ** 2 + (proj.fy - c.field.fy) ** 2);
+  };
+
+  let bestInliers: typeof correspondences = [];
+  let bestMeanErr = Number.POSITIVE_INFINITY;
+
+  // Enumerate every 4-subset. For N ≤ 8 (our real-world case) that's
+  // at most C(8,4) = 70 fits — cheap.
+  for (const subset of combinations(correspondences, 4)) {
+    const H = computeHomographyDLT(subset);
+    if (!H) continue;
+
+    const inliers: typeof correspondences = [];
+    let errSum = 0;
+    for (const c of correspondences) {
+      const e = errOf(H, c);
+      if (e <= outlierThresholdYards) {
+        inliers.push(c);
+        errSum += e;
+      }
+    }
+
+    if (inliers.length < 4) continue;
+    const meanErr = errSum / inliers.length;
+
+    // Prefer more inliers. Break ties with lower mean error.
+    if (
+      inliers.length > bestInliers.length ||
+      (inliers.length === bestInliers.length && meanErr < bestMeanErr)
+    ) {
+      bestInliers = inliers;
+      bestMeanErr = meanErr;
+    }
+  }
+
+  if (bestInliers.length < 4) return null;
+
+  // Refit H via LSQ using the full inlier set — gives a better result
+  // than the 4-point exact fit when we have >4 inliers.
+  const finalH = computeHomographyDLT(bestInliers);
+  if (!finalH) return null;
+
+  const inlierSet = new Set(bestInliers);
+  const outliers = correspondences.filter((c) => !inlierSet.has(c));
+  for (const o of outliers) {
+    console.warn('homography_outlier_landmark', {
+      description: o.description,
+      error: Number(errOf(finalH, o).toFixed(1)),
+    });
+  }
+
+  return { homography: finalH, inliers: bestInliers, outliers };
+}
+
+/** Yield every k-subset of arr (order-preserving, deterministic). */
+function* combinations<T>(arr: readonly T[], k: number): Generator<T[]> {
+  if (k === 0) {
+    yield [];
+    return;
+  }
+  if (k > arr.length) return;
+  for (let i = 0; i <= arr.length - k; i++) {
+    const head = arr[i];
+    if (head === undefined) continue;
+    for (const tail of combinations(arr.slice(i + 1), k - 1)) {
+      yield [head, ...tail];
+    }
+  }
+}
+
 /** Mean reprojection error — how well does H fit the correspondences? */
 function computeReprojectionError(
   correspondences: Array<{ pixel: PixelPoint; field: FieldPoint }>,
@@ -381,28 +492,50 @@ export async function calibrateFieldFromFrame(
   const correspondences = landmarks.map((l) => ({
     pixel: { px: l.px, py: l.py },
     field: { fx: l.fx, fy: l.fy },
+    description: l.description,
   }));
 
-  const H = computeHomographyDLT(correspondences);
-  if (!H) return null;
+  // Use the robust fit — it'll drop any landmark Claude mis-labeled (e.g.
+  // put fx=40 when the play is going toward the other goal line, so the
+  // painted "40" is actually the 60-yard line from the near goal). A
+  // single mis-labeled landmark otherwise drags the whole H off by yards.
+  const robust = robustHomographyDLT(correspondences);
+  if (!robust) {
+    console.warn('calibration_rejected_no_consistent_inliers', {
+      landmarkCount: landmarks.length,
+    });
+    return null;
+  }
 
-  const err = computeReprojectionError(correspondences, H);
+  const err = computeReprojectionError(robust.inliers, robust.homography);
   // Tightened from 8yd → 4yd. An 8yd reprojection error means player
   // field positions could be off by a whole defensive shift (a 10-yard
   // zone concept). That's not "approximate" — it's actively wrong for
   // coaching decisions. 4yd is the practical boundary between "useful
   // field-space analytics" and "better to leave it in pixel space."
   if (err > 4) {
-    console.warn('calibration_rejected_high_error', { err, landmarkCount: landmarks.length });
+    console.warn('calibration_rejected_high_error', {
+      err,
+      inliers: robust.inliers.length,
+      outliers: robust.outliers.length,
+    });
     return null;
   }
 
+  if (robust.outliers.length > 0) {
+    console.log('calibration_dropped_outliers', {
+      kept: robust.inliers.length,
+      dropped: robust.outliers.length,
+      finalError: Number(err.toFixed(2)),
+    });
+  }
+
   return {
-    homography: H,
-    landmarks: landmarks.map((l) => ({
-      pixel: { px: l.px, py: l.py },
-      field: { fx: l.fx, fy: l.fy },
-      description: l.description,
+    homography: robust.homography,
+    landmarks: robust.inliers.map((l) => ({
+      pixel: l.pixel,
+      field: l.field,
+      description: l.description ?? '',
     })),
     reprojectionError: err,
   };
