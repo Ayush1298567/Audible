@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { detectPeopleInFrames } from './player-detector';
 import { trackDetections, type PlayerTrack } from './player-tracker';
 import { ocrJerseysForTracks, applyJerseysToTracks } from './jersey-ocr';
+import { calibrateFieldFromClip, applyHomography } from './field-homography';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,8 @@ export interface TrackClipOptions {
   apiKey?: string;
   /** Run jersey number OCR on tracks after tracking. Default true. */
   readJerseys?: boolean;
+  /** Run field homography + project tracks into yard coords. Default true. */
+  registerField?: boolean;
 }
 
 export interface TrackClipResult {
@@ -47,6 +50,10 @@ export interface TrackClipResult {
   durationMs: number;
   /** How many jerseys were successfully identified (if OCR ran). */
   jerseysRead?: number;
+  /** If field calibration succeeded, the reprojection error in yards. */
+  fieldCalibrationError?: number;
+  /** Whether the clip is in field-space (true) or pixel-space only (false). */
+  fieldRegistered?: boolean;
 }
 
 /**
@@ -132,6 +139,32 @@ export async function trackPlayersInClip(
     }
   }
 
+  // Step 7: field registration (homography → yard coords)
+  let fieldRegistered = false;
+  let fieldCalibrationError: number | undefined;
+  if (opts.registerField !== false && tracks.length > 0) {
+    try {
+      const calibration = await calibrateFieldFromClip(clipPath, clipDurationSeconds);
+      if (calibration) {
+        fieldRegistered = true;
+        fieldCalibrationError = calibration.reprojectionError;
+        // Project every track point into field coords
+        tracks = tracks.map((trk) => ({
+          ...trk,
+          homography: calibration.homography,
+          points: trk.points.map((p) => {
+            const field = applyHomography({ px: p.x, py: p.y }, calibration.homography);
+            return field ? { ...p, fx: field.fx, fy: field.fy } : p;
+          }),
+        }));
+      }
+    } catch (err) {
+      console.warn('field_calibration_failed', {
+        err: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      });
+    }
+  }
+
   // Cleanup
   await unlink(clipPath).catch(() => {});
 
@@ -142,5 +175,7 @@ export async function trackPlayersInClip(
     frameCount: frames.length,
     durationMs: Date.now() - startTime,
     jerseysRead,
+    fieldCalibrationError,
+    fieldRegistered,
   };
 }

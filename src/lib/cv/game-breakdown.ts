@@ -227,6 +227,8 @@ export async function trackPlayersForOnePlay(
       tracks: result.tracks.length,
       frames: result.frameCount,
       jerseysRead: result.jerseysRead ?? 0,
+      fieldRegistered: result.fieldRegistered ?? false,
+      fieldError: result.fieldCalibrationError,
       durationMs: result.durationMs,
     });
     return result.tracks;

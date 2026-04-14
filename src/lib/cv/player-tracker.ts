@@ -28,6 +28,10 @@ export interface TrackPoint {
   /** Bounding box height, normalized. */
   h: number;
   confidence: number;
+  /** Field-space X (yards downfield from near goal line). Set by M3 homography. */
+  fx?: number;
+  /** Field-space Y (yards from near sideline). Set by M3 homography. */
+  fy?: number;
 }
 
 export interface PlayerTrack {
@@ -39,6 +43,8 @@ export interface PlayerTrack {
   jersey?: string;
   /** If set, the position role (e.g., "WR", "FS"). */
   role?: string;
+  /** If set, the homography used to compute field coords. Row-major 3x3. */
+  homography?: [number, number, number, number, number, number, number, number, number];
 }
 
 // ─── IoU + distance scoring ────────────────────────────────
