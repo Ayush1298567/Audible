@@ -530,8 +530,8 @@ function CallSheetStep({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-6 animate-fade-in call-sheet-print-root">
+      <div className="flex items-start justify-between gap-4 print:hidden">
         <div>
           <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
             Friday Call Sheet
@@ -543,13 +543,37 @@ function CallSheetStep({
             Every recommendation bucketed by when to call it. Print this. Carry it.
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleCopy}
-          className="font-display text-xs uppercase tracking-widest shrink-0"
-        >
-          {copyState === 'copied' ? '✓ Copied' : copyState === 'error' ? 'Copy failed' : 'Copy to clipboard'}
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            onClick={handleCopy}
+            className="font-display text-xs uppercase tracking-widest"
+          >
+            {copyState === 'copied'
+              ? '✓ Copied'
+              : copyState === 'error'
+                ? 'Copy failed'
+                : 'Copy to clipboard'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => window.print()}
+            className="font-display text-xs uppercase tracking-widest"
+          >
+            Print
+          </Button>
+        </div>
+      </div>
+
+      {/* Print-only header — keeps the printed sheet self-labeling */}
+      <div className="hidden print:block">
+        <h1 className="text-2xl font-bold text-black">
+          Call Sheet — {walkthrough.opponentName}
+        </h1>
+        <p className="text-xs text-gray-600">
+          Generated {new Date(walkthrough.generatedAt).toLocaleDateString()} ·{' '}
+          {walkthrough.playsAnalyzed} plays analyzed
+        </p>
       </div>
 
       {/* Bucketed card grid */}

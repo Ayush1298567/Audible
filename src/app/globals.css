@@ -352,3 +352,69 @@ h1, h2, h3, h4, h5, h6,
   background: var(--color-primary);
   border-radius: 0 2px 2px 0;
 }
+
+/* ── Call sheet printable styles ─────────────────────────
+   When the coach prints from the Call Sheet step, strip the dark
+   theme, chrome, and modal overlay — emit something that reads like
+   a one-page cheat card. */
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 0.4in;
+  }
+
+  /* Hide everything except the call sheet root + its descendants */
+  body * {
+    visibility: hidden;
+  }
+
+  .call-sheet-print-root,
+  .call-sheet-print-root * {
+    visibility: visible;
+  }
+
+  .call-sheet-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    color: black !important;
+    padding: 0;
+  }
+
+  /* Drop glass, gradients, backdrop blur, animations for print */
+  .call-sheet-print-root .glass-card,
+  .call-sheet-print-root [class*="bg-slate"],
+  .call-sheet-print-root [class*="bg-cyan"],
+  .call-sheet-print-root [class*="bg-black"] {
+    background: white !important;
+    backdrop-filter: none !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+    animation: none !important;
+  }
+
+  /* Force readable text */
+  .call-sheet-print-root,
+  .call-sheet-print-root p,
+  .call-sheet-print-root h1,
+  .call-sheet-print-root h2,
+  .call-sheet-print-root h3,
+  .call-sheet-print-root h4,
+  .call-sheet-print-root span,
+  .call-sheet-print-root li {
+    color: black !important;
+  }
+
+  .call-sheet-print-root [class*="text-cyan"],
+  .call-sheet-print-root [class*="text-slate"] {
+    color: #334155 !important;
+  }
+
+  /* Keep bucket cards together — no mid-card page breaks */
+  .call-sheet-print-root .glass-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
