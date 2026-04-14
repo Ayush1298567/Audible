@@ -878,6 +878,72 @@ describe('matchup confidence + trust tiers', () => {
     expect(cb24?.trust).toBe('low');
   });
 
+  it('reports gameCount and demotes single-game high-conf tendencies to medium', () => {
+    // 4 high-conf matchups but all from gameA → cross-game rule demotes to medium.
+    const play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+    // Two games available in the input (meta) but all 4 matchups come from gameA
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: play('1'), gameId: 'gameA' },
+      { analytics: play('2'), gameId: 'gameA' },
+      { analytics: play('3'), gameId: 'gameA' },
+      { analytics: play('4'), gameId: 'gameA' },
+      { analytics: null, gameId: 'gameB' },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.gameCount).toBe(1);
+    expect(cb24?.trust).toBe('medium'); // Would be 'high' without cross-game rule
+  });
+
+  it('keeps high trust when the same defender shows up across ≥2 games', () => {
+    const play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: play('1'), gameId: 'gameA' },
+      { analytics: play('2'), gameId: 'gameA' },
+      { analytics: play('3'), gameId: 'gameB' },
+      { analytics: play('4'), gameId: 'gameB' },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.gameCount).toBe(2);
+    expect(cb24?.trust).toBe('high');
+  });
+
+  it('does not penalize single-game input (coach only has one game on this opponent)', () => {
+    const play = (suffix: string): PlayAnalytics => computePlayAnalytics([
+      namedTrack(`wr-${suffix}`, 'WR', [[0, 30, 5], [2, 50, 5]], {
+        jersey: '88', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+      namedTrack(`cb-${suffix}`, 'CB', [[0, 34, 5], [2, 54, 5]], {
+        jersey: '24', trackQuality: 0.9, roleConfidence: 0.9, jerseyConfidence: 0.95,
+      }),
+    ]);
+    // Everything from the same game — but the coach only has one game of
+    // film, so we shouldn't demote all their tendencies to medium.
+    const tendencies = aggregateMatchupsByDefender([
+      { analytics: play('1'), gameId: 'onlyGame' },
+      { analytics: play('2'), gameId: 'onlyGame' },
+      { analytics: play('3'), gameId: 'onlyGame' },
+      { analytics: play('4'), gameId: 'onlyGame' },
+    ]);
+    const cb24 = tendencies.find((t) => t.jersey === '24');
+    expect(cb24?.gameCount).toBe(1);
+    // Single-game input → cross-game rule relaxed → still 'high'
+    expect(cb24?.trust).toBe('high');
+  });
+
   it('ranks high-trust signals ahead of low-trust ones with bigger raw numbers', () => {
     // CB #24: 4 high-conf plays, modest 3yd avg sep
     const trustedPlay = (suffix: string): PlayAnalytics => computePlayAnalytics([

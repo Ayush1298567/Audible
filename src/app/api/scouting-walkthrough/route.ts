@@ -234,6 +234,7 @@ export async function POST(req: Request): Promise<Response> {
       tx
         .select({
           id: plays.id,
+          gameId: plays.gameId,
           down: plays.down,
           distance: plays.distance,
           quarter: plays.quarter,
@@ -464,8 +465,11 @@ export async function POST(req: Request): Promise<Response> {
 
     // Roll up every matchup by the defender's jersey+role so we can point
     // Claude at specific exploitable defenders instead of just "the corner".
-    const matchupAnalyticsInput = allPlays.map((_, idx) => ({
+    // gameId flows into the aggregators so tendencies get demoted when
+    // they only show up in one of several games.
+    const matchupAnalyticsInput = allPlays.map((p, idx) => ({
       analytics: parsedAnalytics[idx] ?? null,
+      gameId: p.gameId,
     }));
     const defenderTendencies = aggregateMatchupsByDefender(matchupAnalyticsInput);
     const offenseTendencies = aggregateMatchupsByOffense(matchupAnalyticsInput);

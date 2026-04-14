@@ -1124,11 +1124,15 @@ export interface DefenderTendency {
    * the "should the coach actually believe this number" score.
    */
   meanConfidence: number;
+  /** Number of distinct games this tendency shows up in. Cross-game proof. */
+  gameCount: number;
   /**
-   * Coarse trust tier derived from confidence × sample size:
-   *   high   — ≥4 matchups AND mean conf ≥0.7  → cite this player by name
-   *   medium — ≥3 matchups AND mean conf ≥0.5  → mention as a pattern
-   *   low    — anything else                   → don't cite as a tendency
+   * Coarse trust tier derived from confidence × sample size × cross-game:
+   *   high   — ≥4 matchups AND mean conf ≥0.7 AND seen in ≥2 games → cite by name
+   *   medium — ≥3 matchups AND mean conf ≥0.5 (any game count)     → cite as pattern
+   *   low    — anything else                                        → don't cite
+   * Single-game tendencies can never be "high" trust — might be a
+   * specific-opponent matchup call rather than a core scheme habit.
    */
   trust: 'high' | 'medium' | 'low';
 }
@@ -1153,12 +1157,14 @@ export interface OffensiveTendency {
   trackIds: string[];
   /** Mean joint confidence across the contributing matchups (0-1). */
   meanConfidence: number;
+  /** Number of distinct games this player shows up in. */
+  gameCount: number;
   /** Trust tier: high (cite by name) / medium (mention) / low (don't cite). */
   trust: 'high' | 'medium' | 'low';
 }
 
 export function aggregateMatchupsByOffense(
-  plays: Array<{ analytics: PlayAnalytics | null }>,
+  plays: Array<{ analytics: PlayAnalytics | null; gameId?: string | null }>,
 ): OffensiveTendency[] {
   type Bucket = {
     jersey?: string;
@@ -1167,6 +1173,7 @@ export function aggregateMatchupsByOffense(
     seps: number[];
     trackIds: string[];
     confidences: number[];
+    gameIds: Set<string>;
   };
 
   const buckets = new Map<string, Bucket>();
@@ -1191,6 +1198,7 @@ export function aggregateMatchupsByOffense(
           seps: [],
           trackIds: [],
           confidences: [],
+          gameIds: new Set(),
         };
         buckets.set(key, b);
       }
@@ -1198,18 +1206,26 @@ export function aggregateMatchupsByOffense(
       b.seps.push(m.minSeparationYards);
       b.trackIds.push(m.offense.trackId);
       b.confidences.push(m.confidence);
+      if (p.gameId) b.gameIds.add(p.gameId);
     }
   }
 
   const avg = (arr: number[]): number =>
     arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
 
+  const distinctGamesInInput = new Set(
+    plays.map((p) => p.gameId).filter((id): id is string => !!id),
+  ).size;
+  const singleGameInput = distinctGamesInInput <= 1;
+
   const tendencies: OffensiveTendency[] = [];
   for (const b of buckets.values()) {
     if (b.speeds.length < 2) continue;
     const meanConf = avg(b.confidences);
+    const gameCount = b.gameIds.size;
+    const hasCrossGame = singleGameInput || gameCount >= 2;
     let trust: 'high' | 'medium' | 'low';
-    if (b.speeds.length >= 4 && meanConf >= 0.7) trust = 'high';
+    if (b.speeds.length >= 4 && meanConf >= 0.7 && hasCrossGame) trust = 'high';
     else if (b.speeds.length >= 3 && meanConf >= 0.5) trust = 'medium';
     else trust = 'low';
 
@@ -1223,6 +1239,7 @@ export function aggregateMatchupsByOffense(
       avgSeparationYards: Number(avg(b.seps).toFixed(1)),
       trackIds: b.trackIds,
       meanConfidence: Number(meanConf.toFixed(2)),
+      gameCount,
       trust,
     });
   }
@@ -1246,7 +1263,7 @@ export function aggregateMatchupsByOffense(
  * Defenders without jerseys fall into a single bucket per role.
  */
 export function aggregateMatchupsByDefender(
-  plays: Array<{ analytics: PlayAnalytics | null }>,
+  plays: Array<{ analytics: PlayAnalytics | null; gameId?: string | null }>,
 ): DefenderTendency[] {
   type Bucket = {
     jersey?: string;
@@ -1256,6 +1273,7 @@ export function aggregateMatchupsByDefender(
     offSpeeds: number[];
     trackIds: string[];
     confidences: number[];
+    gameIds: Set<string>;
   };
 
   const buckets = new Map<string, Bucket>();
@@ -1287,6 +1305,7 @@ export function aggregateMatchupsByDefender(
           offSpeeds: [],
           trackIds: [],
           confidences: [],
+          gameIds: new Set(),
         };
         buckets.set(key, b);
       }
@@ -1295,21 +1314,33 @@ export function aggregateMatchupsByDefender(
       b.offSpeeds.push(m.offenseMaxSpeedYps);
       b.trackIds.push(m.defense.trackId);
       b.confidences.push(m.confidence);
+      if (p.gameId) b.gameIds.add(p.gameId);
     }
   }
 
   const avg = (arr: number[]): number =>
     arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
 
+  // Single-game input is a special case — we can't require cross-game
+  // consistency when there's only one game of film. Detect that and
+  // relax the "≥2 games for high trust" rule.
+  const distinctGamesInInput = new Set(
+    plays.map((p) => p.gameId).filter((id): id is string => !!id),
+  ).size;
+  const singleGameInput = distinctGamesInInput <= 1;
+
   const tendencies: DefenderTendency[] = [];
   for (const b of buckets.values()) {
     if (b.seps.length < 2) continue;
     const meanConf = avg(b.confidences);
+    const gameCount = b.gameIds.size;
 
-    // Trust tier — drives whether the prompt cites this player by name or
-    // not, and whether the UI calls it a "tendency" or a "weak signal".
+    // Trust tier — high requires cross-game evidence UNLESS input was
+    // single-game (can't penalize for what wasn't available). A tendency
+    // seen in only 1 of 3 games gets demoted to "medium" at best.
     let trust: 'high' | 'medium' | 'low';
-    if (b.seps.length >= 4 && meanConf >= 0.7) trust = 'high';
+    const hasCrossGame = singleGameInput || gameCount >= 2;
+    if (b.seps.length >= 4 && meanConf >= 0.7 && hasCrossGame) trust = 'high';
     else if (b.seps.length >= 3 && meanConf >= 0.5) trust = 'medium';
     else trust = 'low';
 
@@ -1323,6 +1354,7 @@ export function aggregateMatchupsByDefender(
       avgOffenseSpeedYps: Number(avg(b.offSpeeds).toFixed(1)),
       trackIds: b.trackIds,
       meanConfidence: Number(meanConf.toFixed(2)),
+      gameCount,
       trust,
     });
   }
