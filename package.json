@@ -17,6 +17,7 @@
     "test:db": "vitest run tests/integration/db",
     "test:e2e": "playwright test",
     "bench:cv-accuracy": "bun run tests/bench/cv-accuracy/run-bench.ts",
+    "bench:pbp": "bun run tests/bench/pbp-validation/run-bench.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
