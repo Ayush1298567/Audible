@@ -9,11 +9,14 @@ const NAV_ITEMS = [
   { label: 'Hub', href: '/hub', icon: HubIcon },
   { label: 'Film Room', href: '/film', icon: FilmIcon },
   { label: 'Scouting', href: '/scouting', icon: ScoutingIcon },
+  { label: 'Playbook', href: '/playbook', icon: PlaybookIcon },
   { label: 'Board', href: '/board', icon: BoardIcon },
   { label: 'The Field', href: '/field', icon: FieldIcon },
   { label: 'Practice', href: '/practice', icon: PracticeIcon },
+  { label: 'Live Game', href: '/live', icon: LiveIcon },
   { label: 'Games', href: '/games', icon: GamesIcon },
   { label: 'Roster', href: '/roster', icon: RosterIcon },
+  { label: 'Settings', href: '/settings', icon: SettingsIcon },
 ] as const;
 
 export function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
@@ -136,6 +139,17 @@ function ScoutingIcon({ className }: { className?: string }) {
   );
 }
 
+function PlaybookIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 2h10a2 2 0 012 2v8a2 2 0 01-2 2H2V2z" />
+      <line x1="5" y1="5" x2="11" y2="5" />
+      <line x1="5" y1="8" x2="9" y2="8" />
+      <line x1="5" y1="11" x2="10" y2="11" />
+    </svg>
+  );
+}
+
 function BoardIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -165,6 +179,16 @@ function PracticeIcon({ className }: { className?: string }) {
   );
 }
 
+function LiveIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="3" />
+      <circle cx="8" cy="8" r="6" opacity="0.4" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function GamesIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -180,6 +204,15 @@ function RosterIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="5" r="3" />
       <path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="2" />
+      <path d="M13.5 8a5.5 5.5 0 01-.4 2l1.2 1.2-1.5 1.5L11.6 11.5A5.5 5.5 0 018 13.5a5.5 5.5 0 01-2-.4l-1.2 1.2-1.5-1.5L4.5 11.6A5.5 5.5 0 012.5 8a5.5 5.5 0 01.4-2L1.7 4.8l1.5-1.5L4.4 4.5A5.5 5.5 0 018 2.5a5.5 5.5 0 012 .4l1.2-1.2 1.5 1.5-1.2 1.2A5.5 5.5 0 0113.5 8z" />
     </svg>
   );
 }

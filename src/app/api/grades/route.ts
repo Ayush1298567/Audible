@@ -3,6 +3,7 @@ import { filmGrades, players } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 // ─── POST: Submit a grade ───────────────────────────────────
 
@@ -21,6 +22,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = gradeSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const [result] = await withProgramContext(input.programId, async (tx) =>
       tx.insert(filmGrades).values({
@@ -40,6 +42,9 @@ export async function POST(req: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to save grade' }, { status: 500 });
   }
 }
@@ -57,6 +62,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     if (playerId) {
       // Individual player grade summary
@@ -97,6 +103,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ grades: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch grades' }, { status: 500 });
   }
 }

@@ -20,19 +20,21 @@ interface GamePlan {
 }
 
 export default function MyPlanPage() {
-  const { session } = usePlayerSession();
+  const { session, authFetch } = usePlayerSession();
   const [gamePlan, setGamePlan] = useState<GamePlan | null>(null);
   const [planPlays, setPlanPlays] = useState<GamePlanPlay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!session) return;
-    const res = await fetch(`/api/player-data?programId=${session.programId}&type=gameplan`);
+    const res = await authFetch(
+      `/api/player-data?programId=${session.programId}&playerId=${session.playerId}&type=gameplan`,
+    );
     const data = await res.json();
     setGamePlan(data.gamePlan ?? null);
     setPlanPlays(data.plays ?? []);
     setIsLoading(false);
-  }, [session]);
+  }, [session, authFetch]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -8,6 +8,8 @@
 // Defense
 export * from './coverage-shell';
 export * from './pressure';
+export * from './coverage-disguise';
+export * from './alignment-depth';
 
 // Offense
 export * from './offense';

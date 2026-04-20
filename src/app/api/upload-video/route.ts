@@ -1,6 +1,7 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { beginSpan } from '@/lib/observability/log';
 import { z } from 'zod';
+import { AuthError, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 /**
  * Client-upload endpoint for game film videos.
@@ -28,12 +29,13 @@ export async function POST(req: Request): Promise<Response> {
     const jsonResponse = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async (pathname, clientPayloadStr) => {
+      onBeforeGenerateToken: async (_pathname, clientPayloadStr) => {
         // Validate client payload (programId, gameId)
         if (!clientPayloadStr) {
           throw new Error('Missing client payload');
         }
-        clientPayloadSchema.parse(JSON.parse(clientPayloadStr));
+        const payload = clientPayloadSchema.parse(JSON.parse(clientPayloadStr));
+        await requireCoachRoleForProgram('coordinator', payload.programId);
 
         return {
           allowedContentTypes: [
@@ -53,6 +55,9 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json(jsonResponse);
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     const msg = error instanceof Error ? error.message : 'Upload failed';
     return Response.json({ error: msg }, { status: 500 });
   }

@@ -19,10 +19,16 @@ interface Opponent {
   name: string;
 }
 
+interface Season {
+  id: string;
+  year: number;
+}
+
 interface Game {
   id: string;
   opponentName: string | null;
   opponentId: string | null;
+  seasonId: string | null;
   playedAt: string | null;
   isHome: boolean | null;
   ourScore: number | null;
@@ -33,21 +39,27 @@ export default function GamesPage() {
   const { programId } = useProgram();
   const [games, setGames] = useState<Game[]>([]);
   const [opponents, setOpponents] = useState<Opponent[]>([]);
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [selectedSeason, setSelectedSeason] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [addOpponentOpen, setAddOpponentOpen] = useState(false);
   const [addGameOpen, setAddGameOpen] = useState(false);
+  const [addSeasonOpen, setAddSeasonOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!programId) return;
     try {
-      const [gamesRes, oppsRes] = await Promise.all([
+      const [gamesRes, oppsRes, seasonsRes] = await Promise.all([
         fetch(`/api/games?programId=${programId}`),
         fetch(`/api/opponents?programId=${programId}`),
+        fetch(`/api/seasons?programId=${programId}`),
       ]);
       const gamesData = await gamesRes.json();
       const oppsData = await oppsRes.json();
+      const seasonsData = await seasonsRes.json();
       setGames(gamesData.games ?? []);
       setOpponents(oppsData.opponents ?? []);
+      setSeasons(seasonsData.seasons ?? []);
     } catch {
       // empty state handles failure
     } finally {
@@ -79,12 +91,14 @@ export default function GamesPage() {
   async function handleAddGame(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    const seasonId = form.get('seasonId') as string;
     await fetch('/api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         programId,
         opponentId: form.get('opponentId'),
+        seasonId: seasonId || undefined,
         playedAt: form.get('playedAt')
           ? new Date(form.get('playedAt') as string).toISOString()
           : undefined,
@@ -94,6 +108,25 @@ export default function GamesPage() {
     setAddGameOpen(false);
     void load();
   }
+
+  async function handleAddSeason(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    await fetch('/api/seasons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        programId,
+        year: Number(form.get('year')),
+      }),
+    });
+    setAddSeasonOpen(false);
+    void load();
+  }
+
+  const filteredGames = selectedSeason === 'all'
+    ? games
+    : games.filter((g) => g.seasonId === selectedSeason);
 
   return (
     <div className="space-y-8">
@@ -111,7 +144,49 @@ export default function GamesPage() {
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Season filter */}
+          {seasons.length > 0 && (
+            <select
+              value={selectedSeason}
+              onChange={(e) => setSelectedSeason(e.target.value)}
+              className="h-10 rounded-lg border border-border/50 bg-white/[0.03] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="all">All Seasons</option>
+              {seasons.map((s) => (
+                <option key={s.id} value={s.id}>{s.year}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Add Season dialog */}
+          <Dialog open={addSeasonOpen} onOpenChange={setAddSeasonOpen}>
+            <DialogTrigger className={`${buttonVariants({ variant: 'outline' })} border-border/50 bg-white/[0.03] hover:bg-white/[0.06]`}>
+              + Season
+            </DialogTrigger>
+            <DialogContent className="glass-card border-border/50">
+              <DialogHeader>
+                <DialogTitle className="font-display text-xl tracking-wide">Add Season</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleAddSeason} className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="season-year" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Year</Label>
+                  <Input
+                    id="season-year"
+                    name="year"
+                    type="number"
+                    min={2020}
+                    max={2040}
+                    defaultValue={new Date().getFullYear()}
+                    required
+                    className="bg-white/[0.03] border-border/50"
+                  />
+                </div>
+                <Button type="submit" className="w-full glow-blue">Add Season</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+
           {/* Add Opponent dialog */}
           <Dialog open={addOpponentOpen} onOpenChange={setAddOpponentOpen}>
             <DialogTrigger className={`${buttonVariants({ variant: 'outline' })} border-border/50 bg-white/[0.03] hover:bg-white/[0.06]`}>
@@ -200,6 +275,21 @@ export default function GamesPage() {
                     ))}
                   </select>
                 </div>
+                {seasons.length > 0 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="game-season" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Season</Label>
+                    <select
+                      id="game-season"
+                      name="seasonId"
+                      className="flex h-10 w-full rounded-md border border-border/50 bg-white/[0.03] px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                    >
+                      <option value="">No season</option>
+                      {seasons.map((s) => (
+                        <option key={s.id} value={s.id}>{s.year}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="game-date" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
@@ -241,17 +331,19 @@ export default function GamesPage() {
           <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-primary" />
           Loading schedule...
         </div>
-      ) : games.length === 0 ? (
+      ) : filteredGames.length === 0 ? (
         <div className="glass-card rounded-xl border border-dashed border-border/50 py-16 text-center animate-fade-in">
           <p className="text-sm text-muted-foreground">
             {opponents.length === 0
               ? 'Add opponents first, then create games to upload film against.'
-              : 'No games yet. Click \u201cAdd Game\u201d to schedule your first matchup.'}
+              : selectedSeason !== 'all'
+                ? 'No games in this season yet.'
+                : 'No games yet. Click \u201cAdd Game\u201d to schedule your first matchup.'}
           </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {games.map((game, idx) => {
+          {filteredGames.map((game, idx) => {
             const hasScore = game.ourScore != null && game.opponentScore != null;
             const won = hasScore && ((game.ourScore ?? 0) > (game.opponentScore ?? 0));
             const lost = hasScore && ((game.ourScore ?? 0) < (game.opponentScore ?? 0));

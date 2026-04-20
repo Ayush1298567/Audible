@@ -25,6 +25,7 @@ import { put } from '@vercel/blob';
 import { log } from '@/lib/observability/log';
 
 const execFileAsync = promisify(execFile);
+const CLIP_DURATION_TOLERANCE_SECONDS = 0.1;
 
 export interface ClipSplitInput {
   /** The Vercel Blob URL of the uploaded concatenated MP4 */
@@ -97,9 +98,17 @@ export async function extractClip(
     ]);
 
     const buffer = await readFile(outputPath);
-    const durationSeconds = endSeconds - startSeconds;
+    const expectedDuration = endSeconds - startSeconds;
+    const actualDuration = await probeVideoDuration(outputPath);
+    const drift = Math.abs(actualDuration - expectedDuration);
 
-    return { buffer, durationSeconds };
+    if (drift > CLIP_DURATION_TOLERANCE_SECONDS) {
+      throw new Error(
+        `Clip duration drift exceeds tolerance: expected=${expectedDuration.toFixed(3)} actual=${actualDuration.toFixed(3)} drift=${drift.toFixed(3)}`,
+      );
+    }
+
+    return { buffer, durationSeconds: actualDuration };
   } finally {
     // Clean up temp file
     await unlink(outputPath).catch(() => {});

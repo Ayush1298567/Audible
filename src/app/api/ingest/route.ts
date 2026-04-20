@@ -42,11 +42,13 @@ import {
   HudlReconciliationError,
 } from '@/lib/ingestion';
 import { probeVideoDuration, splitAndUploadClips } from '@/lib/ingestion/split-clips';
+import { AuthError, requireCoachForProgram } from '@/lib/auth/guards';
 
 export const maxDuration = 60;
 
 export async function POST(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/ingest' }, req);
+  let uploadContext: { programId: string; filmUploadId: string } | null = null;
 
   try {
     // Parse the multipart form
@@ -70,6 +72,7 @@ export async function POST(req: Request): Promise<Response> {
         { status: 400 },
       );
     }
+    const coachSession = await requireCoachForProgram(programId);
 
     // Read file contents
     const csvText = await csvFile.text();
@@ -151,7 +154,7 @@ export async function POST(req: Request): Promise<Response> {
           xmlSegmentCount: xmlResult.segmentCount,
           mp4DurationSeconds: mp4Duration,
           status: 'splitting',
-          uploadedByClerkUserId: 'placeholder', // no Clerk yet
+          uploadedByClerkUserId: coachSession.clerkUserId,
         })
         .returning(),
     );
@@ -159,6 +162,7 @@ export async function POST(req: Request): Promise<Response> {
     if (!upload) {
       throw new Error('Film upload insert returned no rows');
     }
+    uploadContext = { programId, filmUploadId: upload.id };
 
     // Step 5: Insert tag rows from the reconciled CSV data
     log.info('inserting_play_tags', {
@@ -256,6 +260,24 @@ export async function POST(req: Request): Promise<Response> {
   } catch (error) {
     span.fail(error);
 
+    if (uploadContext) {
+      const failedUpload = uploadContext;
+      await withProgramContext(failedUpload.programId, async (tx) =>
+        tx
+          .update(filmUploads)
+          .set({
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : String(error),
+          })
+          .where(eq(filmUploads.id, failedUpload.filmUploadId)),
+      ).catch((updateError) => {
+        log.error('ingest_failed_to_mark_upload_failed', {
+          filmUploadId: failedUpload.filmUploadId,
+          error: updateError instanceof Error ? updateError.message : String(updateError),
+        });
+      });
+    }
+
     if (error instanceof HudlReconciliationError) {
       return Response.json(
         {
@@ -265,6 +287,9 @@ export async function POST(req: Request): Promise<Response> {
         },
         { status: 422 },
       );
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
 
     log.error('ingest_unexpected_error', {
@@ -288,4 +313,49 @@ function categorizeDistance(distance: number | null): string | null {
   if (distance <= 3) return 'short';
   if (distance <= 6) return 'medium';
   return 'long';
+}
+
+/**
+ * GET /api/ingest?programId=X
+ *
+ * List all film uploads for a program with their processing status.
+ * Coaches use this to see which films are uploaded / parsing / ready / failed.
+ */
+export async function GET(req: Request): Promise<Response> {
+  const span = beginSpan({ route: '/api/ingest', method: 'GET' }, req);
+  try {
+    const url = new URL(req.url);
+    const programId = url.searchParams.get('programId');
+    if (!programId) {
+      return Response.json({ error: 'programId required' }, { status: 400 });
+    }
+    await requireCoachForProgram(programId);
+
+    const uploads = await withProgramContext(programId, async (tx) =>
+      tx
+        .select({
+          id: filmUploads.id,
+          gameId: filmUploads.gameId,
+          status: filmUploads.status,
+          csvRowCount: filmUploads.csvRowCount,
+          xmlSegmentCount: filmUploads.xmlSegmentCount,
+          mp4DurationSeconds: filmUploads.mp4DurationSeconds,
+          errorMessage: filmUploads.errorMessage,
+          createdAt: filmUploads.createdAt,
+          completedAt: filmUploads.completedAt,
+        })
+        .from(filmUploads)
+        .where(eq(filmUploads.programId, programId))
+        .orderBy(filmUploads.createdAt),
+    );
+
+    span.done({ count: uploads.length });
+    return Response.json({ uploads });
+  } catch (error) {
+    span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    return Response.json({ error: 'Failed to fetch uploads' }, { status: 500 });
+  }
 }

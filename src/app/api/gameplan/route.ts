@@ -1,10 +1,16 @@
 import { withProgramContext } from '@/lib/db/client';
 import { gamePlans } from '@/lib/db/schema';
-import { gamePlanPlays, suggestionDismissals } from '@/lib/db/schema-gameplan';
+import { gamePlanPlays, gamePlanAssignments, suggestionDismissals } from '@/lib/db/schema-gameplan';
 import { beginSpan } from '@/lib/observability/log';
-import { eq, } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { suggestPlays } from '@/lib/game-plan/suggester';
+import {
+  AuthError,
+  requireCoachForProgram,
+  requireCoachRoleForProgram,
+  requireHeadCoach,
+} from '@/lib/auth/guards';
 
 const createSchema = z.object({
   programId: z.string().uuid(),
@@ -41,6 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     switch (action) {
       case 'create': {
         const input = createSchema.parse(body);
+        await requireCoachRoleForProgram('coordinator', input.programId);
         const [plan] = await withProgramContext(input.programId, async (tx) =>
           tx.insert(gamePlans).values({
             programId: input.programId,
@@ -54,6 +61,7 @@ export async function POST(req: Request): Promise<Response> {
 
       case 'addPlay': {
         const input = addPlaySchema.parse(body);
+        await requireCoachRoleForProgram('coordinator', input.programId);
         const [play] = await withProgramContext(input.programId, async (tx) =>
           tx.insert(gamePlanPlays).values({
             programId: input.programId,
@@ -72,6 +80,7 @@ export async function POST(req: Request): Promise<Response> {
 
       case 'suggest': {
         const input = suggestSchema.parse(body);
+        await requireCoachForProgram(input.programId);
         const suggestions = await suggestPlays({
           programId: input.programId,
           opponentId: input.opponentId,
@@ -91,6 +100,7 @@ export async function POST(req: Request): Promise<Response> {
           playName: z.string().min(1),
           formation: z.string().optional(),
         }).parse(body);
+        await requireCoachRoleForProgram('coordinator', dismissInput.programId);
 
         await withProgramContext(dismissInput.programId, async (tx) =>
           tx.insert(suggestionDismissals).values({
@@ -106,18 +116,88 @@ export async function POST(req: Request): Promise<Response> {
         return Response.json({ dismissed: true });
       }
 
+      case 'pushInstallToPlayers': {
+        const input = z
+          .object({
+            programId: z.string().uuid(),
+            gamePlanId: z.string().uuid(),
+            positionGroup: z.string().min(1).max(10),
+            situation: z.string().min(1).max(30).default('player_install'),
+            assignmentText: z.string().min(1).max(2000),
+          })
+          .parse(body);
+        await requireCoachRoleForProgram('coordinator', input.programId);
+
+        const cardRows = await withProgramContext(input.programId, async (tx) =>
+          tx
+            .select({ id: gamePlanPlays.id })
+            .from(gamePlanPlays)
+            .where(
+              and(
+                eq(gamePlanPlays.programId, input.programId),
+                eq(gamePlanPlays.gamePlanId, input.gamePlanId),
+              ),
+            ),
+        );
+
+        const cardIds = cardRows.map((r) => r.id);
+        if (cardIds.length === 0) {
+          return Response.json(
+            { error: 'No plays on the board yet — add cards before pushing to players.' },
+            { status: 400 },
+          );
+        }
+
+        await withProgramContext(input.programId, async (tx) => {
+          await tx
+            .delete(gamePlanAssignments)
+            .where(
+              and(
+                eq(gamePlanAssignments.programId, input.programId),
+                eq(gamePlanAssignments.gamePlanId, input.gamePlanId),
+                eq(gamePlanAssignments.positionGroup, input.positionGroup),
+                eq(gamePlanAssignments.situation, input.situation),
+              ),
+            );
+
+          await tx.insert(gamePlanAssignments).values({
+            programId: input.programId,
+            gamePlanId: input.gamePlanId,
+            positionGroup: input.positionGroup,
+            situation: input.situation,
+            assignmentText: input.assignmentText,
+            relatedPlayIds: cardIds,
+          });
+        });
+
+        span.done({
+          action: 'pushInstallToPlayers',
+          gamePlanId: input.gamePlanId,
+          positionGroup: input.positionGroup,
+          cardCount: cardIds.length,
+        });
+        return Response.json({ linkedCardCount: cardIds.length, positionGroup: input.positionGroup });
+      }
+
       case 'publish': {
         const { programId, gamePlanId } = z.object({
           programId: z.string().uuid(),
           gamePlanId: z.string().uuid(),
         }).parse(body);
+        const headCoach = await requireHeadCoach();
+        if (headCoach.programId !== programId) {
+          return Response.json({ error: 'Forbidden: program mismatch' }, { status: 403 });
+        }
 
         await withProgramContext(programId, async (tx) =>
-          tx.update(gamePlans).set({
-            publishStatus: 'published',
-            publishedAt: new Date(),
-            updatedAt: new Date(),
-          }).where(eq(gamePlans.id, gamePlanId)),
+          tx
+            .update(gamePlans)
+            .set({
+              publishStatus: 'published',
+              publishedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(and(eq(gamePlans.id, gamePlanId), eq(gamePlans.programId, programId))),
         );
 
         span.done({ gamePlanId, published: true });
@@ -131,6 +211,9 @@ export async function POST(req: Request): Promise<Response> {
     span.fail(error);
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
     return Response.json({ error: 'Game plan operation failed' }, { status: 500 });
   }
@@ -147,19 +230,32 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     if (gamePlanId) {
       // Get a specific game plan with its plays
       const [plan] = await withProgramContext(programId, async (tx) =>
-        tx.select().from(gamePlans).where(eq(gamePlans.id, gamePlanId)),
+        tx
+          .select()
+          .from(gamePlans)
+          .where(and(eq(gamePlans.id, gamePlanId), eq(gamePlans.programId, programId))),
       );
+      if (!plan) {
+        return Response.json({ error: 'Game plan not found' }, { status: 404 });
+      }
       const plays = await withProgramContext(programId, async (tx) =>
         tx.select().from(gamePlanPlays)
           .where(eq(gamePlanPlays.gamePlanId, gamePlanId))
           .orderBy(gamePlanPlays.situation, gamePlanPlays.sortOrder),
       );
-      span.done({ gamePlanId, playCount: plays.length });
-      return Response.json({ gamePlan: plan, plays });
+      const assignments = await withProgramContext(programId, async (tx) =>
+        tx
+          .select()
+          .from(gamePlanAssignments)
+          .where(eq(gamePlanAssignments.gamePlanId, gamePlanId)),
+      );
+      span.done({ gamePlanId, playCount: plays.length, assignmentCount: assignments.length });
+      return Response.json({ gamePlan: plan, plays, assignments });
     }
 
     // List all game plans
@@ -170,6 +266,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ gamePlans: plans });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch game plans' }, { status: 500 });
   }
 }

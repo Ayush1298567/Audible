@@ -2,6 +2,7 @@ import { beginSpan } from '@/lib/observability/log';
 import { z } from 'zod';
 import { start } from 'workflow/api';
 import { gameBreakdownWorkflow } from '@/lib/cv/game-breakdown';
+import { AuthError, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 export const maxDuration = 60;
 
@@ -25,6 +26,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = requestSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const run = await start(gameBreakdownWorkflow, [{
       programId: input.programId,
@@ -41,6 +43,9 @@ export async function POST(req: Request): Promise<Response> {
     }, { status: 202 });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     const msg = error instanceof Error ? error.message : 'Failed';
     return Response.json({ error: msg }, { status: 500 });
   }

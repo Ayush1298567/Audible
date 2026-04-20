@@ -12,15 +12,26 @@
  * progress to the UI.
  */
 
+import { writeFile, readFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { put } from '@vercel/blob';
 import { Sandbox } from '@vercel/sandbox';
 import { withProgramContext } from '@/lib/db/client';
 import { plays } from '@/lib/db/schema';
+import { probeVideoDuration } from '@/lib/ingestion/split-clips';
 import { analyzePlayFromBlob, type PlayAnalysis } from './claude-play-analyzer';
-import { type DetectedPlay, detectPlayBoundaries } from './gemini-boundary';
+import { type DetectedPlay, detectPlayBoundariesFromBuffer } from './gemini-boundary';
 import type { PlayerTrack } from './player-tracker';
 import type { PlayAnalytics } from './track-analytics';
 import { trackPlayersInClip } from './track-clip';
+
+const execFileAsync = promisify(execFile);
+const CHUNK_SECONDS = 15 * 60;
+const LONG_GAME_THRESHOLD_SECONDS = 20 * 60;
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -39,19 +50,88 @@ export interface JobProgress {
   error?: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────
+
+/**
+ * Infer the field hash from the play direction. In high-school and
+ * small-college football the ball is placed on the hash closest to
+ * where the previous play ended, and the play direction correlates
+ * with which hash the ball sits on. Not perfect, but better than
+ * hardcoding 'Middle' for every play.
+ */
+function inferHash(direction: string | null | undefined): string {
+  if (!direction) return 'Middle';
+  const d = direction.toLowerCase();
+  if (d.includes('left')) return 'Left';
+  if (d.includes('right')) return 'Right';
+  return 'Middle';
+}
+
 // ─── Stage 1: Gemini boundary detection ─────────────────────
 
 /**
  * Scan the full video with Gemini to find play boundaries.
- * For long videos (>30 min), chunks into segments and runs them sequentially.
+ * For long videos (>20 min), chunks into 15-minute segments and stitches results.
  */
 export async function geminiScanPlayBoundaries(videoBlobUrl: string): Promise<DetectedPlay[]> {
   'use step';
 
-  // For the first version, send the full video.
-  // TODO: For long games, chunk into 10-15 min segments.
-  const result = await detectPlayBoundaries({ videoBlobUrl });
-  return result.plays;
+  const videoResponse = await fetch(videoBlobUrl);
+  if (!videoResponse.ok) {
+    throw new Error(`Failed to fetch video: ${videoResponse.status}`);
+  }
+  const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
+
+  const tmpPath = join(tmpdir(), `boundary-${randomUUID()}.mp4`);
+  await writeFile(tmpPath, videoBuffer);
+
+  try {
+    const duration = await probeVideoDuration(tmpPath);
+
+    if (duration <= LONG_GAME_THRESHOLD_SECONDS) {
+      const result = await detectPlayBoundariesFromBuffer(videoBuffer);
+      return result.plays;
+    }
+
+    const allPlays: DetectedPlay[] = [];
+
+    for (let start = 0; start < duration; start += CHUNK_SECONDS) {
+      const len = Math.min(CHUNK_SECONDS, duration - start);
+      const chunkPath = join(tmpdir(), `boundary-chunk-${randomUUID()}.mp4`);
+      await execFileAsync('ffmpeg', [
+        '-y',
+        '-ss',
+        String(start),
+        '-i',
+        tmpPath,
+        '-t',
+        String(len),
+        '-c',
+        'copy',
+        chunkPath,
+      ]);
+      const chunkBuf = await readFile(chunkPath);
+      await unlink(chunkPath).catch(() => {});
+
+      const chunkResult = await detectPlayBoundariesFromBuffer(chunkBuf, {
+        segmentStartSeconds: start,
+        segmentDurationSeconds: len,
+      });
+
+      for (const p of chunkResult.plays) {
+        allPlays.push({
+          ...p,
+          startSeconds: start + p.startSeconds,
+          endSeconds: start + p.endSeconds,
+        });
+      }
+    }
+
+    allPlays.sort((a, b) => a.startSeconds - b.startSeconds);
+    return allPlays;
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
 }
 
 // ─── Stage 2: Clip extraction via Vercel Sandbox ────────────
@@ -294,7 +374,7 @@ export async function savePlayToDb(
         down: down || null,
         distance: distance || null,
         distanceBucket: distBucket,
-        hash: 'Middle', // TODO: from analysis
+        hash: inferHash(analysis?.playDirection ?? boundary.direction),
         yardLine: boundary.yardLine || null,
         quarter: boundary.quarter || 1,
         formation: analysis?.formation ?? boundary.formation,

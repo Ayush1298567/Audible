@@ -33,18 +33,34 @@ interface Player {
   status: string;
 }
 
+interface Coach {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  clerkUserId: string;
+}
+
 export default function RosterPage() {
   const { programId } = useProgram();
   const [players, setPlayers] = useState<Player[]>([]);
+  const [staff, setStaff] = useState<Coach[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [staffDialogOpen, setStaffDialogOpen] = useState(false);
 
   const loadPlayers = useCallback(async () => {
     if (!programId) return;
     try {
-      const res = await fetch(`/api/players?programId=${programId}`);
-      const data = await res.json();
-      setPlayers(data.players ?? []);
+      const [playersRes, staffRes] = await Promise.all([
+        fetch(`/api/players?programId=${programId}`),
+        fetch(`/api/coaches?programId=${programId}`),
+      ]);
+      const playersData = await playersRes.json();
+      const staffData = await staffRes.json();
+      setPlayers(playersData.players ?? []);
+      setStaff(staffData.coaches ?? []);
     } catch {
       // silently fail on load — empty state handles it
     } finally {
@@ -271,6 +287,144 @@ export default function RosterPage() {
           ))}
         </div>
       )}
+
+      {/* Coaching Staff section */}
+      <div className="space-y-4 pt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-display text-xl font-bold tracking-wide text-foreground">
+              Coaching Staff
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {staff.length} coach{staff.length !== 1 ? 'es' : ''}
+            </p>
+          </div>
+          <Dialog open={staffDialogOpen} onOpenChange={setStaffDialogOpen}>
+            <DialogTrigger className={`${buttonVariants({ variant: 'outline' })} border-border/50 bg-white/[0.03]`}>
+              + Add Coach
+            </DialogTrigger>
+            <DialogContent className="glass-card border-border/50">
+              <DialogHeader>
+                <DialogTitle className="font-display text-xl tracking-wide">Add Coach</DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const form = new FormData(e.currentTarget);
+                  await fetch('/api/coaches', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      programId,
+                      clerkUserId: form.get('clerkUserId'),
+                      email: form.get('email'),
+                      firstName: form.get('firstName') || undefined,
+                      lastName: form.get('lastName') || undefined,
+                      role: form.get('role'),
+                    }),
+                  });
+                  setStaffDialogOpen(false);
+                  void loadPlayers();
+                }}
+                className="space-y-4 pt-2"
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="coach-first" className="text-xs uppercase tracking-widest text-muted-foreground">First Name</Label>
+                    <Input id="coach-first" name="firstName" className="h-10 bg-white/[0.03]" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="coach-last" className="text-xs uppercase tracking-widest text-muted-foreground">Last Name</Label>
+                    <Input id="coach-last" name="lastName" className="h-10 bg-white/[0.03]" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="coach-email" className="text-xs uppercase tracking-widest text-muted-foreground">Email</Label>
+                  <Input id="coach-email" name="email" type="email" required className="h-10 bg-white/[0.03]" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="coach-clerk" className="text-xs uppercase tracking-widest text-muted-foreground">Clerk User ID</Label>
+                  <Input id="coach-clerk" name="clerkUserId" required placeholder="user_..." className="h-10 bg-white/[0.03] font-mono text-xs" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="coach-role" className="text-xs uppercase tracking-widest text-muted-foreground">Role</Label>
+                  <select id="coach-role" name="role" required className="flex h-10 w-full rounded-md border border-border/50 bg-white/[0.03] px-3 py-2 text-sm">
+                    <option value="coordinator">Coordinator</option>
+                    <option value="assistant">Assistant</option>
+                  </select>
+                </div>
+                <Button type="submit" className="w-full glow-blue">Add Coach</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {staff.length === 0 ? (
+          <div className="glass-card rounded-xl border border-dashed border-border/50 py-8 text-center">
+            <p className="text-sm text-muted-foreground">No coaching staff yet.</p>
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {staff.map((c) => (
+              <div key={c.id} className="glass-card rounded-xl p-4 space-y-2 group">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {[c.firstName, c.lastName].filter(Boolean).join(' ') || c.email}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{c.email}</p>
+                  </div>
+                  <span className={`tag-chip ${c.role === 'head_coach' ? 'tag-positive' : c.role === 'coordinator' ? 'tag-info' : 'tag-neutral'}`}>
+                    {c.role.replace('_', ' ')}
+                  </span>
+                </div>
+                {c.role !== 'head_coach' && (
+                  <div className="flex gap-2 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const newRole = c.role === 'coordinator' ? 'assistant' : 'coordinator';
+                        await fetch('/api/coaches', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            action: 'updateRole',
+                            programId,
+                            coachId: c.id,
+                            role: newRole,
+                          }),
+                        });
+                        void loadPlayers();
+                      }}
+                      className="text-[10px] text-blue-400 hover:text-blue-300 uppercase tracking-wider"
+                    >
+                      {c.role === 'coordinator' ? 'Demote to assistant' : 'Promote to coordinator'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await fetch('/api/coaches', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            action: 'remove',
+                            programId,
+                            coachId: c.id,
+                          }),
+                        });
+                        void loadPlayers();
+                      }}
+                      className="text-[10px] text-red-400 hover:text-red-300 uppercase tracking-wider"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

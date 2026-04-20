@@ -58,6 +58,16 @@ export default function FilmRoomPage() {
   const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<'auto' | 'manual' | 'hudl'>('auto');
 
+  // Upload processing status
+  const [uploads, setUploads] = useState<Array<{
+    id: string;
+    gameId: string | null;
+    status: string;
+    csvRowCount: number | null;
+    createdAt: string;
+    errorMessage: string | null;
+  }>>([]);
+
   // Filters
   const [filterDown, setFilterDown] = useState<string>('all');
   const [filterFormation, setFilterFormation] = useState<string>('all');
@@ -66,9 +76,14 @@ export default function FilmRoomPage() {
 
   const loadGames = useCallback(async () => {
     if (!programId) return;
-    const res = await fetch(`/api/games?programId=${programId}`);
-    const data = await res.json();
-    setGames(data.games ?? []);
+    const [gamesRes, uploadsRes] = await Promise.all([
+      fetch(`/api/games?programId=${programId}`),
+      fetch(`/api/ingest?programId=${programId}`),
+    ]);
+    const gamesData = await gamesRes.json();
+    const uploadsData = uploadsRes.ok ? await uploadsRes.json() : { uploads: [] };
+    setGames(gamesData.games ?? []);
+    setUploads(uploadsData.uploads ?? []);
   }, [programId]);
 
   const loadPlays = useCallback(async () => {
@@ -187,6 +202,36 @@ export default function FilmRoomPage() {
             </p>
           </div>
         </div>
+
+        {/* Upload processing status */}
+        {uploads.length > 0 && (() => {
+          const processing = uploads.filter((u) => u.status === 'parsing' || u.status === 'splitting' || u.status === 'awaiting_cv');
+          const failed = uploads.filter((u) => u.status === 'failed');
+          const ready = uploads.filter((u) => u.status === 'ready');
+          if (processing.length === 0 && failed.length === 0) return null;
+          return (
+            <div className="flex items-center gap-3 rounded-lg border border-slate-700/50 bg-slate-900/40 px-4 py-2.5 text-xs">
+              {processing.length > 0 && (
+                <div className="flex items-center gap-2 text-blue-400">
+                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  {processing.length} upload{processing.length !== 1 ? 's' : ''} processing
+                </div>
+              )}
+              {failed.length > 0 && (
+                <div className="flex items-center gap-1.5 text-red-400">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
+                  {failed.length} failed
+                </div>
+              )}
+              {ready.length > 0 && (
+                <div className="text-slate-500">{ready.length} ready · {uploads.length} total</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Gradient divider */}
         <div className="h-px bg-gradient-to-r from-blue-500/50 via-cyan-500/30 to-transparent" />

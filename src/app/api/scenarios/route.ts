@@ -3,6 +3,7 @@ import { scenarios } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 const createSchema = z.object({
   programId: z.string().uuid(),
@@ -25,6 +26,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = createSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const [scenario] = await withProgramContext(input.programId, async (tx) =>
       tx.insert(scenarios).values({
@@ -50,6 +52,9 @@ export async function POST(req: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to create scenario' }, { status: 500 });
   }
 }
@@ -65,6 +70,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const conditions = [eq(scenarios.programId, programId)];
     if (positionMode) {
@@ -79,6 +85,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ scenarios: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch scenarios' }, { status: 500 });
   }
 }

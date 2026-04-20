@@ -1,7 +1,6 @@
 import { db } from '@/lib/db/client';
 import { programs, seasons, players, opponents, games } from '@/lib/db/schema';
 import { sql } from 'drizzle-orm';
-import { redirect } from 'next/navigation';
 
 /**
  * GET /dev — instant dev bypass.

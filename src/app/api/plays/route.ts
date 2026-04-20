@@ -3,6 +3,7 @@ import { plays, games, opponents } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/plays', method: 'GET' }, req);
@@ -16,6 +17,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const conditions = [eq(plays.programId, programId)];
     if (gameId) {
@@ -65,6 +67,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ plays: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch plays' }, { status: 500 });
   }
 }
@@ -87,6 +92,7 @@ export async function PATCH(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = overrideSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const [updated] = await withProgramContext(input.programId, async (tx) =>
       tx
@@ -110,6 +116,9 @@ export async function PATCH(req: Request): Promise<Response> {
     span.fail(error);
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
     return Response.json({ error: 'Failed to update play' }, { status: 500 });
   }

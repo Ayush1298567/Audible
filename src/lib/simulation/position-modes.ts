@@ -103,7 +103,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
         explanation: 'Count the down linemen and linebackers to identify the front.',
       },
     ],
-    postSnapDecisions: (ctx) => [
+    postSnapDecisions: (_ctx) => [
       {
         prompt: 'Read the hole — where do you cut?',
         options: ['A Gap', 'B Gap', 'C Gap', 'Bounce Outside', 'Cutback'],
@@ -161,7 +161,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
   OL: {
     position: 'OL',
     camera: { name: 'Lineman POV', followPlayerId: 'o-c', zoom: 3, elevation: 'ground' },
-    preSnapDecisions: (ctx) => [
+    preSnapDecisions: (_ctx) => [
       {
         prompt: 'Identify the Mike linebacker',
         options: ['Middle (#54)', 'Weak Side (#56)', 'Strong Side (#50)', 'No Mike (Nickel)'],
@@ -170,7 +170,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
         explanation: 'The Mike sets the protection. Point to the middle linebacker to set the slide.',
       },
     ],
-    postSnapDecisions: (ctx) => [
+    postSnapDecisions: (_ctx) => [
       {
         prompt: 'Stunt recognition — the DT loops behind the DE. What do you do?',
         options: ['Pass Off', 'Stay on DE', 'Double the Loop', 'Call Switch'],
@@ -209,7 +209,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
   LB: {
     position: 'LB',
     camera: { name: 'LB Depth (Elevated)', followPlayerId: 'd-mlb', zoom: 1.8, elevation: 'elevated' },
-    preSnapDecisions: (ctx) => [
+    preSnapDecisions: (_ctx) => [
       {
         prompt: 'Key read — who are you reading?',
         options: ['Guard', 'Tackle', 'Running Back', 'Tight End'],
@@ -218,7 +218,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
         explanation: 'Read through the guard to the back. The guard\'s first step tells you run/pass and direction.',
       },
     ],
-    postSnapDecisions: (ctx) => [
+    postSnapDecisions: (_ctx) => [
       {
         prompt: 'Guard pulls — what do you do?',
         options: ['Spill (Force Outside)', 'Squeeze (Close the Hole)', 'Fill the Gap', 'Drop to Coverage'],
@@ -257,7 +257,7 @@ export const POSITION_MODES: Record<PositionMode, PositionModeConfig> = {
   S: {
     position: 'S',
     camera: { name: 'Safety (Widest View)', followPlayerId: 'd-fs', zoom: 1.2, elevation: 'overhead' },
-    preSnapDecisions: (ctx) => [
+    preSnapDecisions: (_ctx) => [
       {
         prompt: 'Disguise timing — when do you rotate?',
         options: ['Pre-snap (Early)', 'At the Snap', 'Post-snap Read', 'Hold Coverage'],

@@ -15,6 +15,8 @@ import { plays, cvTags, playerDetections } from '@/lib/db/schema';
 import { analyzePlay } from '@/lib/cv';
 import { beginSpan, log } from '@/lib/observability/log';
 import { z } from 'zod';
+import { AuthError, requireCoachRoleForProgram } from '@/lib/auth/guards';
+import { getActivePromptIds, type PromptTaskName } from '@/lib/prompts/active-prompts';
 
 export const maxDuration = 60;
 
@@ -23,12 +25,36 @@ const requestSchema = z.object({
   gameId: z.string().uuid(),
 });
 
+const PROMPT_TASKS: PromptTaskName[] = [
+  'coverage_shell',
+  'pressure',
+  'blocking_scheme',
+  'route_concept',
+  'run_gap',
+  'player_positions',
+  'coverage_disguise',
+  'alignment_depth',
+];
+
 export async function POST(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/cv' }, req);
 
   try {
     const body = await req.json();
     const { programId, gameId } = requestSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', programId);
+
+    const promptIds = await getActivePromptIds(PROMPT_TASKS);
+    for (const name of PROMPT_TASKS) {
+      if (!promptIds[name]) {
+        log.error('cv_missing_active_prompt', { name });
+        return Response.json(
+          { error: `Missing active prompt row for ${name}. Run DB migrations or seed prompts.` },
+          { status: 503 },
+        );
+      }
+    }
+    const P = promptIds as Record<PromptTaskName, string>;
 
     // Get all ready plays for this game that haven't been CV-analyzed
     const gamePlays = await withProgramContext(programId, async (tx) =>
@@ -79,7 +105,7 @@ export async function POST(req: Request): Promise<Response> {
             playId: play.id,
             tagType: 'coverage_shell' as const,
             value: result.coverageShell.value,
-            promptId: null as unknown as string, // TODO: link to prompts table
+            promptId: P.coverage_shell,
             anthropicConfidence: result.coverageShell.anthropicConfidence,
             openaiConfidence: result.coverageShell.openaiConfidence,
             ensembleConfidence: result.coverageShell.ensembleConfidence,
@@ -94,11 +120,54 @@ export async function POST(req: Request): Promise<Response> {
             playId: play.id,
             tagType: 'pressure_type' as const,
             value: result.pressure.value,
-            promptId: null as unknown as string,
+            promptId: P.pressure,
             anthropicConfidence: result.pressure.anthropicConfidence,
             openaiConfidence: result.pressure.openaiConfidence,
             ensembleConfidence: result.pressure.ensembleConfidence,
             modelsAgreed: result.pressure.agreed,
+            isSurfaced: true,
+          });
+        }
+
+        if (result.coverageDisguise?.accepted && result.coverageDisguise.value) {
+          tagInserts.push({
+            programId,
+            playId: play.id,
+            tagType: 'coverage_disguise' as const,
+            value: result.coverageDisguise.value,
+            promptId: P.coverage_disguise,
+            anthropicConfidence: result.coverageDisguise.anthropicConfidence,
+            openaiConfidence: result.coverageDisguise.openaiConfidence,
+            ensembleConfidence: result.coverageDisguise.ensembleConfidence,
+            modelsAgreed: result.coverageDisguise.agreed,
+            isSurfaced: true,
+          });
+        }
+
+        if (result.alignmentDepth?.accepted && result.alignmentDepth.value) {
+          const v = result.alignmentDepth.value;
+          tagInserts.push({
+            programId,
+            playId: play.id,
+            tagType: 'cushion_depth_cb' as const,
+            value: { yards: v.cbCushionYards },
+            promptId: P.alignment_depth,
+            anthropicConfidence: result.alignmentDepth.anthropicConfidence,
+            openaiConfidence: result.alignmentDepth.openaiConfidence,
+            ensembleConfidence: result.alignmentDepth.ensembleConfidence,
+            modelsAgreed: result.alignmentDepth.agreed,
+            isSurfaced: true,
+          });
+          tagInserts.push({
+            programId,
+            playId: play.id,
+            tagType: 'safety_depth' as const,
+            value: { yards: v.safetyDepthYards },
+            promptId: P.alignment_depth,
+            anthropicConfidence: result.alignmentDepth.anthropicConfidence,
+            openaiConfidence: result.alignmentDepth.openaiConfidence,
+            ensembleConfidence: result.alignmentDepth.ensembleConfidence,
+            modelsAgreed: result.alignmentDepth.agreed,
             isSurfaced: true,
           });
         }
@@ -109,7 +178,7 @@ export async function POST(req: Request): Promise<Response> {
             playId: play.id,
             tagType: 'blocking_scheme' as const,
             value: result.blockingScheme.value,
-            promptId: null as unknown as string,
+            promptId: P.blocking_scheme,
             anthropicConfidence: result.blockingScheme.anthropicConfidence,
             openaiConfidence: result.blockingScheme.openaiConfidence,
             ensembleConfidence: result.blockingScheme.ensembleConfidence,
@@ -124,7 +193,7 @@ export async function POST(req: Request): Promise<Response> {
             playId: play.id,
             tagType: 'route_concept' as const,
             value: result.routeConcept.value,
-            promptId: null as unknown as string,
+            promptId: P.route_concept,
             anthropicConfidence: result.routeConcept.anthropicConfidence,
             openaiConfidence: result.routeConcept.openaiConfidence,
             ensembleConfidence: result.routeConcept.ensembleConfidence,
@@ -139,7 +208,7 @@ export async function POST(req: Request): Promise<Response> {
             playId: play.id,
             tagType: 'run_gap' as const,
             value: result.runGap.value,
-            promptId: null as unknown as string,
+            promptId: P.run_gap,
             anthropicConfidence: result.runGap.anthropicConfidence,
             openaiConfidence: result.runGap.openaiConfidence,
             ensembleConfidence: result.runGap.ensembleConfidence,
@@ -166,7 +235,7 @@ export async function POST(req: Request): Promise<Response> {
             yYards: p.yYards,
             depthYards: p.depthYards,
             alignmentNotes: p.alignmentNotes,
-            promptId: null,
+            promptId: P.player_positions,
             ensembleConfidence: result.playerPositions?.ensembleConfidence ?? 0,
           }));
 
@@ -188,6 +257,9 @@ export async function POST(req: Request): Promise<Response> {
     });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }

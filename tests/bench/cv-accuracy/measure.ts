@@ -70,7 +70,7 @@ export function measure(args: {
     t.jersey ? key(t.role, t.jersey) : `${t.role}#anon`;
 
   const expectedHigh = new Set(args.expectedHighTrust);
-  const expectedMed = new Set(args.expectedMediumTrust ?? []);
+  const _expectedMed = new Set(args.expectedMediumTrust ?? []);
   const mustNotHigh = new Set(args.mustNotBeHighTrust);
   const fakeKeys = new Set(args.fakeDefenderKeys ?? []);
 

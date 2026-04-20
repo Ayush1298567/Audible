@@ -50,7 +50,7 @@ const POSITION_OPTIONS = [
 
 function SetupWizard() {
   const router = useRouter();
-  const { setProgramId } = useProgram();
+  const { refresh } = useProgram();
   const [step, setStep] = useState<Step>('program');
   const [program, setProgram] = useState<ProgramData | null>(null);
   const [rosterPlayers, setRosterPlayers] = useState<RosterPlayer[]>([]);
@@ -65,7 +65,7 @@ function SetupWizard() {
 
   function handleProgramCreated(data: ProgramData) {
     setProgram(data);
-    setProgramId(data.id, data.name);
+    refresh(); // Re-resolve program from the Clerk org after creation
     goNext();
   }
 

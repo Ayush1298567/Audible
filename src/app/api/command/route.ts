@@ -14,15 +14,18 @@ import { generateText, gateway, stepCountIs } from 'ai';
 import { beginSpan } from '@/lib/observability/log';
 import { buildCommandBarTools } from '@/lib/command-bar/tools';
 import { z } from 'zod';
+import { AuthError, requireCoach } from '@/lib/auth/guards';
+import { getCached, setCached } from '@/lib/ai/runtime-cache';
+import { getModel } from '@/lib/ai/model-policy';
 
 export const maxDuration = 30;
 
 // Use Haiku for command bar parsing — fast and cheap (PLAN.md §6)
-const COMMAND_BAR_MODEL = 'anthropic/claude-haiku-4.5';
+const COMMAND_BAR_MODEL = getModel('commandBar');
+const COMMAND_CACHE_TTL_MS = 30_000;
 
 const requestSchema = z.object({
   query: z.string().min(1).max(500),
-  programId: z.string().uuid(),
 });
 
 const SYSTEM_PROMPT = `You are Audible's command bar assistant for football coaches. You help coaches find plays, compute tendencies, look up player alignments, and get stats from their film data.
@@ -48,10 +51,27 @@ export async function POST(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/command' }, req);
 
   try {
+    const session = await requireCoach();
     const body = await req.json();
-    const { query, programId } = requestSchema.parse(body);
+    const { query } = requestSchema.parse(body);
+    const cacheKey = `command:${session.programId}:${query.trim().toLowerCase()}`;
+    const cached = getCached<{
+      text: string;
+      toolResults: unknown[];
+      toolCalls: Array<{ name: string; input: unknown }>;
+    }>(cacheKey);
 
-    const tools = buildCommandBarTools(programId);
+    if (cached) {
+      span.done({
+        query,
+        toolCallCount: cached.toolCalls.length,
+        model: COMMAND_BAR_MODEL,
+        cacheHit: true,
+      });
+      return Response.json(cached);
+    }
+
+    const tools = buildCommandBarTools(session.programId);
 
     const result = await generateText({
       model: gateway(COMMAND_BAR_MODEL),
@@ -70,25 +90,34 @@ export async function POST(req: Request): Promise<Response> {
       .flatMap((step) => step.toolCalls)
       .filter(Boolean);
 
-    span.done({
-      query,
-      toolCallCount: toolCalls.length,
-      model: COMMAND_BAR_MODEL,
-    });
-
-    return Response.json({
+    const responsePayload = {
       text: result.text,
       toolResults,
       toolCalls: toolCalls.map((tc) => ({
         name: tc.toolName,
         input: tc.input,
       })),
+    };
+
+    setCached(cacheKey, responsePayload, COMMAND_CACHE_TTL_MS);
+
+    span.done({
+      query,
+      toolCallCount: toolCalls.length,
+      model: COMMAND_BAR_MODEL,
+      cacheHit: false,
+      promptChars: query.length,
     });
+
+    return Response.json(responsePayload);
   } catch (error) {
     span.fail(error);
 
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Invalid request', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
 
     return Response.json({ error: 'Command failed' }, { status: 500 });

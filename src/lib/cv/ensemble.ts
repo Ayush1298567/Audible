@@ -12,14 +12,17 @@
  */
 
 import { generateText, Output, gateway } from 'ai';
+import { createHash } from 'node:crypto';
 import type { ZodType } from 'zod';
 import { log } from '@/lib/observability/log';
-
-const CONFIDENCE_THRESHOLD = 0.90;
+import { getCvThreshold, requiresDualModelAgreement } from './thresholds';
+import { getCached, setCached } from '@/lib/ai/runtime-cache';
+import { getModel } from '@/lib/ai/model-policy';
 
 // Model IDs via AI Gateway (provider/model format)
-const ANTHROPIC_MODEL = 'anthropic/claude-sonnet-4.6';
-const OPENAI_MODEL = 'openai/gpt-5';
+const ANTHROPIC_MODEL = getModel('cvAnthropic');
+const OPENAI_MODEL = getModel('cvOpenAI');
+const ENSEMBLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export interface EnsembleInput {
   taskName: string;
@@ -41,7 +44,7 @@ export interface EnsembleResult<T> {
   anthropicConfidence: number;
   openaiConfidence: number;
   ensembleConfidence: number;
-  reason: 'accepted' | 'disagreement' | 'below_threshold' | 'error';
+  reason: 'accepted' | 'disagreement' | 'below_threshold' | 'single_model_blocked' | 'error';
 }
 
 /**
@@ -53,6 +56,19 @@ export interface EnsembleResult<T> {
 export async function runEnsemble<T extends { confidence: number }>(
   input: EnsembleInput,
 ): Promise<EnsembleResult<T>> {
+  const threshold = getCvThreshold(input.taskName);
+  const cacheKey = buildEnsembleCacheKey(input);
+  const cached = getCached<EnsembleResult<T>>(cacheKey);
+
+  if (cached) {
+    log.info('ensemble_cache_hit', {
+      taskName: input.taskName,
+      threshold,
+      frameCount: input.frames.length,
+    });
+    return cached;
+  }
+
   const imageContent = input.frames.map((frame) => ({
     type: 'image' as const,
     image: `data:image/png;base64,${frame.base64}`,
@@ -71,6 +87,15 @@ export async function runEnsemble<T extends { confidence: number }>(
       content: [...imageContent, textContent],
     },
   ];
+
+  log.info('ensemble_inference_start', {
+    taskName: input.taskName,
+    threshold,
+    frameCount: input.frames.length,
+    dualModelRequired: requiresDualModelAgreement(input.taskName),
+    anthropicModel: ANTHROPIC_MODEL,
+    openaiModel: OPENAI_MODEL,
+  });
 
   // Run both models in parallel via AI Gateway
   const [anthropicResult, openaiResult] = await Promise.allSettled([
@@ -111,7 +136,7 @@ export async function runEnsemble<T extends { confidence: number }>(
 
   // Both failed
   if (!anthropicValue && !openaiValue) {
-    return {
+    const result: EnsembleResult<T> = {
       agreed: false,
       accepted: false,
       value: null,
@@ -122,6 +147,8 @@ export async function runEnsemble<T extends { confidence: number }>(
       ensembleConfidence: 0,
       reason: 'error',
     };
+    setCached(cacheKey, result, ENSEMBLE_CACHE_TTL_MS);
+    return result;
   }
 
   const anthropicConf = anthropicValue?.confidence ?? 0;
@@ -132,9 +159,10 @@ export async function runEnsemble<T extends { confidence: number }>(
   if (!anthropicValue || !openaiValue) {
     const singleValue = anthropicValue ?? openaiValue;
     const singleConf = anthropicConf || openaiConf;
-    const accepted = singleConf >= CONFIDENCE_THRESHOLD;
+    const singleBlocked = requiresDualModelAgreement(input.taskName);
+    const accepted = !singleBlocked && singleConf >= threshold;
 
-    return {
+    const result: EnsembleResult<T> = {
       agreed: false,
       accepted,
       value: accepted ? singleValue : null,
@@ -143,15 +171,17 @@ export async function runEnsemble<T extends { confidence: number }>(
       anthropicConfidence: anthropicConf,
       openaiConfidence: openaiConf,
       ensembleConfidence: singleConf * 0.8,
-      reason: accepted ? 'accepted' : 'below_threshold',
+      reason: accepted ? 'accepted' : singleBlocked ? 'single_model_blocked' : 'below_threshold',
     };
+    setCached(cacheKey, result, ENSEMBLE_CACHE_TTL_MS);
+    return result;
   }
 
   // Both responded — check agreement
   const agreed = checkAgreement(input.taskName, anthropicValue, openaiValue);
-  const accepted = agreed && avgConfidence >= CONFIDENCE_THRESHOLD;
+  const accepted = agreed && avgConfidence >= threshold;
 
-  return {
+  const result: EnsembleResult<T> = {
     agreed,
     accepted,
     value: accepted ? anthropicValue : null,
@@ -162,12 +192,14 @@ export async function runEnsemble<T extends { confidence: number }>(
     ensembleConfidence: agreed ? avgConfidence : avgConfidence * 0.5,
     reason: accepted ? 'accepted' : agreed ? 'below_threshold' : 'disagreement',
   };
+  setCached(cacheKey, result, ENSEMBLE_CACHE_TTL_MS);
+  return result;
 }
 
 /**
  * Check if two model outputs agree on the key classification field.
  */
-function checkAgreement<T>(taskName: string, a: T, b: T): boolean {
+export function checkAgreement<T>(taskName: string, a: T, b: T): boolean {
   const aObj = a as Record<string, unknown>;
   const bObj = b as Record<string, unknown>;
 
@@ -186,6 +218,15 @@ function checkAgreement<T>(taskName: string, a: T, b: T): boolean {
       return Math.abs(
         (aObj.playerCount as number) - (bObj.playerCount as number),
       ) <= 3;
+    case 'coverage_disguise':
+      return aObj.disguised === bObj.disguised;
+    case 'alignment_depth': {
+      const cbA = aObj.cbCushionYards as number;
+      const cbB = bObj.cbCushionYards as number;
+      const sA = aObj.safetyDepthYards as number;
+      const sB = bObj.safetyDepthYards as number;
+      return Math.abs(cbA - cbB) <= 1.5 && Math.abs(sA - sB) <= 2.5;
+    }
     default:
       for (const key of Object.keys(aObj)) {
         if (key === 'confidence' || key === 'reasoning') continue;
@@ -193,4 +234,16 @@ function checkAgreement<T>(taskName: string, a: T, b: T): boolean {
       }
       return false;
   }
+}
+
+function buildEnsembleCacheKey(input: EnsembleInput): string {
+  const hash = createHash('sha1');
+  hash.update(input.taskName);
+  hash.update(input.context ?? '');
+  hash.update(input.systemPrompt);
+  for (const frame of input.frames) {
+    hash.update(frame.type);
+    hash.update(frame.base64);
+  }
+  return `ensemble:${hash.digest('hex')}`;
 }

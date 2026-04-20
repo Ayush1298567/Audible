@@ -32,12 +32,15 @@ interface PlayerSession {
   lastName: string;
   jerseyNumber: number;
   positions: string[];
+  token: string;
 }
 
 interface PlayerSessionContextValue {
   session: PlayerSession | null;
   isLoading: boolean;
   login: (joinCode: string) => Promise<{ success: boolean; error?: string }>;
+  authHeaders: () => HeadersInit;
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   logout: () => void;
 }
 
@@ -45,6 +48,8 @@ const PlayerSessionContext = createContext<PlayerSessionContextValue>({
   session: null,
   isLoading: true,
   login: async () => ({ success: false }),
+  authHeaders: () => ({}),
+  authFetch: (input, init) => fetch(input, init),
   logout: () => {},
 });
 
@@ -87,6 +92,7 @@ export function PlayerSessionProvider({ children }: { children: ReactNode }) {
         lastName: data.player.lastName,
         jerseyNumber: data.player.jerseyNumber,
         positions: data.player.positions,
+        token: data.token,
       };
 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(playerSession));
@@ -97,13 +103,36 @@ export function PlayerSessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const authHeaders = useCallback((): HeadersInit => {
+    if (!session?.token) return {};
+    return { 'x-player-token': session.token };
+  }, [session]);
+
+  const authFetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const mergedHeaders: HeadersInit = {
+        ...(init?.headers ?? {}),
+        ...authHeaders(),
+      };
+      const response = await fetch(input, { ...init, headers: mergedHeaders });
+      if (response.status === 401) {
+        localStorage.removeItem(STORAGE_KEY);
+        setSession(null);
+      }
+      return response;
+    },
+    [authHeaders],
+  );
+
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     setSession(null);
   }, []);
 
   return (
-    <PlayerSessionContext.Provider value={{ session, isLoading, login, logout }}>
+    <PlayerSessionContext.Provider
+      value={{ session, isLoading, login, authHeaders, authFetch, logout }}
+    >
       {children}
     </PlayerSessionContext.Provider>
   );

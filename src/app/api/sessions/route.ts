@@ -4,6 +4,7 @@ import { beginSpan } from '@/lib/observability/log';
 import { eq, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { generateText, Output, gateway } from 'ai';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 const createSchema = z.object({
   programId: z.string().uuid(),
@@ -41,6 +42,7 @@ export async function POST(req: Request): Promise<Response> {
     switch (action) {
       case 'create': {
         const input = createSchema.parse(body);
+        await requireCoachRoleForProgram('coordinator', input.programId);
 
         const [session] = await withProgramContext(input.programId, async (tx) =>
           tx.insert(sessions).values({
@@ -76,9 +78,13 @@ export async function POST(req: Request): Promise<Response> {
           programId: z.string().uuid(),
           sessionId: z.string().uuid(),
         }).parse(body);
+        await requireCoachRoleForProgram('coordinator', programId);
 
         await withProgramContext(programId, async (tx) =>
-          tx.update(sessions).set({ isPublished: true }).where(eq(sessions.id, sessionId)),
+          tx
+            .update(sessions)
+            .set({ isPublished: true })
+            .where(and(eq(sessions.id, sessionId), eq(sessions.programId, programId))),
         );
 
         span.done({ sessionId, published: true });
@@ -93,6 +99,7 @@ export async function POST(req: Request): Promise<Response> {
           focus: z.string().min(1).max(200),
           sessionType: z.enum(['film_review', 'recognition_challenge', 'decision_drill', 'walkthrough', 'quiz']),
         }).parse(body);
+        await requireCoachRoleForProgram('coordinator', autoPlanInput.programId);
 
         // Fetch plays for this opponent
         const opponentPlays = await withProgramContext(autoPlanInput.programId, async (tx) =>
@@ -222,6 +229,9 @@ Select 8-12 plays that best match the coach's focus. Return the play indices, a 
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Session operation failed' }, { status: 500 });
   }
 }
@@ -235,6 +245,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const result = await withProgramContext(programId, async (tx) =>
       tx.select().from(sessions)
@@ -246,6 +257,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ sessions: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch sessions' }, { status: 500 });
   }
 }

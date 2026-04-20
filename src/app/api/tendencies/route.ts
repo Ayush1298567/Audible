@@ -10,9 +10,12 @@ import {
   getProgramTendencies,
   getPlayerTendencyByFormation,
   getMultiYearComparison,
+  getCvCoverageShellDistribution,
+  getCvPressureTypeDistribution,
 } from '@/lib/tendencies/queries';
 import { analyzeDriveSequences } from '@/lib/tendencies/drive-analysis';
 import { extractOpponentPlaybook } from '@/lib/tendencies/playbook-extraction';
+import { AuthError, requireCoachForProgram } from '@/lib/auth/guards';
 
 export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/tendencies' }, req);
@@ -26,6 +29,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const filter = {
       opponentId: opponentId ?? undefined,
@@ -134,11 +138,25 @@ export async function GET(req: Request): Promise<Response> {
         span.done({ type, sampleSize: result.sampleSize });
         return Response.json(result);
       }
+      case 'cvDefense': {
+        if (!opponentId) {
+          return Response.json({ error: 'opponentId required for cvDefense' }, { status: 400 });
+        }
+        const [coverage, pressure] = await Promise.all([
+          getCvCoverageShellDistribution(programId, filter),
+          getCvPressureTypeDistribution(programId, filter),
+        ]);
+        span.done({ type, coverageN: coverage.sampleSize, pressureN: pressure.sampleSize });
+        return Response.json({ coverage, pressure });
+      }
       default:
         return Response.json({ error: `Unknown tendency type: ${type}` }, { status: 400 });
     }
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to compute tendencies' }, { status: 500 });
   }
 }

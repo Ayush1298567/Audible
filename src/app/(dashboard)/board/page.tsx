@@ -6,6 +6,7 @@ import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 
 const LazyPublishDownloads = dynamic(
   () => import('@/components/gameplan/publish-downloads').then((mod) => mod.PublishDownloads),
@@ -86,6 +87,29 @@ interface Opponent {
   name: string;
 }
 
+interface GamePlanAssignment {
+  id: string;
+  positionGroup: string;
+  situation: string;
+  assignmentText: string;
+  relatedPlayIds: unknown;
+  createdAt: string;
+}
+
+const INSTALL_POSITION_GROUPS = [
+  'QB',
+  'RB',
+  'WR',
+  'TE',
+  'OL',
+  'DL',
+  'LB',
+  'DB',
+  'CB',
+  'S',
+  'ST',
+] as const;
+
 // ─── Board Page ─────────────────────────────────────────────
 
 export default function BoardPage() {
@@ -100,6 +124,12 @@ export default function BoardPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [side, setSide] = useState<Side>('offense');
   const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+  const [assignments, setAssignments] = useState<GamePlanAssignment[]>([]);
+  const [installPositionGroup, setInstallPositionGroup] = useState<string>('WR');
+  const [installSituation, setInstallSituation] = useState('player_install');
+  const [installNotes, setInstallNotes] = useState('');
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installFeedback, setInstallFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const situations = side === 'offense' ? OFFENSE_SITUATIONS : DEFENSE_SITUATIONS;
 
@@ -122,6 +152,7 @@ export default function BoardPage() {
     const data = await res.json();
     setPlanPlays(data.plays ?? []);
     setSelectedPlan(data.gamePlan ?? null);
+    setAssignments(data.assignments ?? []);
   }, [programId]);
 
   useEffect(() => { void load(); }, [load]);
@@ -287,6 +318,43 @@ export default function BoardPage() {
     void loadPlanPlays(selectedPlan.id);
   }
 
+  async function handlePushInstallToPlayers() {
+    if (!programId || !selectedPlan) return;
+    const trimmed = installNotes.trim();
+    if (!trimmed) {
+      setInstallFeedback({ kind: 'err', text: 'Add install notes for players.' });
+      return;
+    }
+    setInstallBusy(true);
+    setInstallFeedback(null);
+    const res = await fetch('/api/gameplan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'pushInstallToPlayers',
+        programId,
+        gamePlanId: selectedPlan.id,
+        positionGroup: installPositionGroup,
+        situation: installSituation.trim() || 'player_install',
+        assignmentText: trimmed,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setInstallBusy(false);
+    if (!res.ok) {
+      setInstallFeedback({
+        kind: 'err',
+        text: typeof body.error === 'string' ? body.error : 'Could not push install.',
+      });
+      return;
+    }
+    setInstallFeedback({
+      kind: 'ok',
+      text: `Pushed ${body.linkedCardCount ?? 0} board cards to ${body.positionGroup ?? installPositionGroup}.`,
+    });
+    void loadPlanPlays(selectedPlan.id);
+  }
+
   // Group plays by situation
   const playsBySituation: Record<string, GamePlanPlay[]> = {};
   for (const play of planPlays) {
@@ -433,6 +501,106 @@ export default function BoardPage() {
       {/* Gradient divider */}
       <div className="h-px bg-gradient-to-r from-blue-500/50 via-cyan-500/30 to-transparent" />
 
+      {selectedPlan && (
+        <div className="glass-card rounded-xl border border-border/50 p-5 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-[10px] uppercase tracking-widest text-primary mb-1">
+                Player app
+              </p>
+              <h2 className="font-display text-lg font-semibold text-foreground tracking-tight">
+                Push install to players
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground max-w-xl">
+                Links every card on this board to the chosen position group. Players only see installs after you publish this plan (head coach) and they match that group.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2">
+              <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                Position group
+              </Label>
+              <select
+                value={installPositionGroup}
+                onChange={(e) => setInstallPositionGroup(e.target.value)}
+                className="flex h-10 w-full rounded-lg border border-border/50 bg-white/[0.03] px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              >
+                {INSTALL_POSITION_GROUPS.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                Situation key
+              </Label>
+              <Input
+                value={installSituation}
+                onChange={(e) => setInstallSituation(e.target.value)}
+                placeholder="player_install"
+                maxLength={30}
+                className="h-10 bg-white/[0.03] border-border/50 focus:border-primary/50 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2 lg:col-span-2">
+              <Label className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                Install notes
+              </Label>
+              <Textarea
+                value={installNotes}
+                onChange={(e) => setInstallNotes(e.target.value)}
+                placeholder="What you want this group to study (alignments, keys, etc.)"
+                maxLength={2000}
+                className="min-h-[4.5rem] bg-white/[0.03] border-border/50 focus:border-primary/50 text-sm"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              onClick={() => void handlePushInstallToPlayers()}
+              disabled={installBusy || planPlays.length === 0}
+              className="glow-blue font-display text-xs uppercase tracking-widest"
+            >
+              {installBusy ? 'Pushing…' : 'Push to players'}
+            </Button>
+            {planPlays.length === 0 && (
+              <span className="text-xs text-amber-400/90">Add at least one board card first.</span>
+            )}
+            {installFeedback && (
+              <span
+                className={`text-xs ${installFeedback.kind === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}
+              >
+                {installFeedback.text}
+              </span>
+            )}
+          </div>
+          {assignments.length > 0 && (
+            <div className="border-t border-border/30 pt-4 space-y-2">
+              <p className="font-display text-[10px] uppercase tracking-widest text-muted-foreground">
+                Active installs on this plan
+              </p>
+              <ul className="space-y-2 text-sm">
+                {assignments.map((a) => (
+                  <li
+                    key={a.id}
+                    className="rounded-lg border border-border/20 bg-white/[0.02] px-3 py-2"
+                  >
+                    <span className="font-mono text-cyan-400/90 text-xs">{a.positionGroup}</span>
+                    <span className="text-muted-foreground text-xs mx-2">·</span>
+                    <span className="text-muted-foreground text-xs">{a.situation}</span>
+                    <p className="mt-1 text-foreground/90 leading-snug">{a.assignmentText}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Plan selector */}
       {!selectedPlan && (
         isLoading ? (
@@ -532,10 +700,19 @@ export default function BoardPage() {
                     <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-blue-400/70 px-1">
                       Suggestions
                     </p>
-                    {sitSuggestions.map((sug) => (
-                      <div key={sug.playName} className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-2.5 text-xs space-y-1">
-                        <p className="font-medium text-foreground">{sug.playName}</p>
-                        <p className="text-blue-400/80 leading-snug">{sug.reasoning}</p>
+                    {sitSuggestions.map((sug) => {
+                      const fromScouting = sug.attacksTendency?.startsWith('from scouting walkthrough');
+                      return (
+                      <div key={sug.playName} className={`rounded-lg border p-2.5 text-xs space-y-1 ${fromScouting ? 'border-cyan-500/30 bg-cyan-500/5' : 'border-blue-500/20 bg-blue-500/5'}`}>
+                        <div className="flex items-baseline gap-2">
+                          <p className="font-medium text-foreground">{sug.playName}</p>
+                          {fromScouting && (
+                            <span className="shrink-0 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-display uppercase tracking-widest text-cyan-400">
+                              from scouting
+                            </span>
+                          )}
+                        </div>
+                        <p className={`leading-snug ${fromScouting ? 'text-cyan-400/80' : 'text-blue-400/80'}`}>{sug.reasoning}</p>
                         <div className="flex items-center gap-1 pt-1">
                           <button
                             type="button"
@@ -557,7 +734,8 @@ export default function BoardPage() {
                           </button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

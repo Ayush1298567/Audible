@@ -3,6 +3,7 @@ import { games, opponents } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 const createGameSchema = z.object({
   programId: z.string().uuid(),
@@ -17,6 +18,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = createGameSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const [game] = await withProgramContext(input.programId, async (tx) =>
       tx.insert(games).values({
@@ -35,6 +37,9 @@ export async function POST(req: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to create game' }, { status: 500 });
   }
 }
@@ -47,6 +52,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const result = await withProgramContext(programId, async (tx) =>
       tx
@@ -54,6 +60,7 @@ export async function GET(req: Request): Promise<Response> {
           id: games.id,
           opponentName: opponents.name,
           opponentId: games.opponentId,
+          seasonId: games.seasonId,
           playedAt: games.playedAt,
           isHome: games.isHome,
           ourScore: games.ourScore,
@@ -70,6 +77,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ games: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch games' }, { status: 500 });
   }
 }

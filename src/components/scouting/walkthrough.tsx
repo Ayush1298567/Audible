@@ -4,7 +4,21 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { renderCallSheetAsText } from '@/lib/scouting/call-sheet';
 import type { Walkthrough } from '@/lib/scouting/insights';
+import {
+  renderScriptAsText,
+  type PracticeScript,
+} from '@/lib/scouting/practice-script';
+import dynamic from 'next/dynamic';
 import { OverlayVideo } from './overlay-video';
+
+const LazyWalkthroughPDFButton = dynamic(
+  () => import('./pdf-downloads').then((mod) => mod.WalkthroughPDFButton),
+  { ssr: false, loading: () => <span className="text-xs text-slate-500">Loading PDF...</span> },
+);
+const LazyPracticeScriptPDFButton = dynamic(
+  () => import('./pdf-downloads').then((mod) => mod.PracticeScriptPDFButton),
+  { ssr: false, loading: () => <span className="text-xs text-slate-500">Loading PDF...</span> },
+);
 
 /**
  * Interactive scouting walkthrough — option-2 UX (step-by-step).
@@ -15,7 +29,15 @@ import { OverlayVideo } from './overlay-video';
  */
 
 interface Props {
-  walkthrough: Walkthrough;
+  walkthrough: Walkthrough & { walkthroughId?: string };
+  /** Tenant id — sent with the practice-script generation call. */
+  programId: string;
+  /**
+   * If a script was already generated for this walkthrough (loaded from
+   * the DB cache), pass it in so the user can jump straight to the script
+   * step without paying tokens again.
+   */
+  initialPracticeScript?: PracticeScript | null;
   onClose: () => void;
 }
 
@@ -23,10 +45,49 @@ type View =
   | { step: 'intro' }
   | { step: 'insight'; insightIdx: number; exampleIdx: number }
   | { step: 'call-sheet' }
-  | { step: 'summary' };
+  | { step: 'summary' }
+  | { step: 'script' };
 
-export function WalkthroughView({ walkthrough, onClose }: Props) {
+export function WalkthroughView({
+  walkthrough,
+  programId,
+  initialPracticeScript,
+  onClose,
+}: Props) {
   const [view, setView] = useState<View>({ step: 'intro' });
+  const [script, setScript] = useState<PracticeScript | null>(initialPracticeScript ?? null);
+  const [isBuildingScript, setIsBuildingScript] = useState(false);
+  const [scriptError, setScriptError] = useState<string | null>(null);
+
+  const buildScript = async (opts: { regenerate?: boolean } = {}) => {
+    // Cached fast path — if a script already exists for this walkthrough
+    // and the user hasn't asked to regenerate, just jump to the step.
+    if (!opts.regenerate && script) {
+      setView({ step: 'script' });
+      return;
+    }
+    setIsBuildingScript(true);
+    setScriptError(null);
+    try {
+      const res = await fetch('/api/scouting/practice-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          programId,
+          walkthroughId: walkthrough.walkthroughId,
+          walkthrough,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Script generation failed');
+      setScript(json.script as PracticeScript);
+      setView({ step: 'script' });
+    } catch (e) {
+      setScriptError(e instanceof Error ? e.message : 'Failed to build script');
+    } finally {
+      setIsBuildingScript(false);
+    }
+  };
 
   const { insights } = walkthrough;
   const hasCallSheet = (walkthrough.callSheet?.buckets.length ?? 0) > 0;
@@ -209,7 +270,21 @@ export function WalkthroughView({ walkthrough, onClose }: Props) {
             />
           )}
           {view.step === 'summary' && (
-            <SummaryStep walkthrough={walkthrough} onClose={onClose} onPrev={prev} />
+            <SummaryStep
+              walkthrough={walkthrough}
+              onPrev={prev}
+              onBuildScript={() => buildScript()}
+              hasCachedScript={Boolean(script)}
+              isBuildingScript={isBuildingScript}
+              scriptError={scriptError}
+            />
+          )}
+          {view.step === 'script' && script && (
+            <ScriptStep
+              script={script}
+              onPrev={() => setView({ step: 'summary' })}
+              onClose={onClose}
+            />
           )}
         </div>
       </div>
@@ -449,12 +524,18 @@ function MeasurementBadges({
 
 function SummaryStep({
   walkthrough,
-  onClose,
   onPrev,
+  onBuildScript,
+  hasCachedScript,
+  isBuildingScript,
+  scriptError,
 }: {
   walkthrough: Walkthrough;
-  onClose: () => void;
   onPrev: () => void;
+  onBuildScript: () => void;
+  hasCachedScript: boolean;
+  isBuildingScript: boolean;
+  scriptError: string | null;
 }) {
   return (
     <div className="space-y-6 animate-fade-in">
@@ -508,6 +589,12 @@ function SummaryStep({
         ))}
       </div>
 
+      {scriptError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {scriptError}
+        </div>
+      )}
+
       <div className="flex items-center justify-between pt-4">
         <Button
           variant="ghost"
@@ -517,10 +604,23 @@ function SummaryStep({
           ← Back
         </Button>
         <Button
-          onClick={onClose}
+          onClick={onBuildScript}
+          disabled={isBuildingScript}
           className="h-11 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest px-6"
         >
-          Done — build the game plan
+          {isBuildingScript ? (
+            <span className="flex items-center gap-2">
+              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Building practice script...
+            </span>
+          ) : hasCachedScript ? (
+            <>Open practice script →</>
+          ) : (
+            <>Build the practice script →</>
+          )}
         </Button>
       </div>
     </div>
@@ -586,6 +686,7 @@ function CallSheetStep({
           >
             Print
           </Button>
+          <LazyWalkthroughPDFButton walkthrough={walkthrough} />
         </div>
       </div>
 
@@ -646,6 +747,176 @@ function CallSheetStep({
           className="h-11 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest px-6"
         >
           See the summary →
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Practice Script step ──────────────────────────────────
+
+function ScriptStep({
+  script,
+  onPrev,
+  onClose,
+}: {
+  script: PracticeScript;
+  onPrev: () => void;
+  onClose: () => void;
+}) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(renderScriptAsText(script));
+      setCopyState('copied');
+      setTimeout(() => setCopyState('idle'), 2000);
+    } catch {
+      setCopyState('error');
+      setTimeout(() => setCopyState('idle'), 2000);
+    }
+  };
+
+  const totalDrills = script.days.reduce(
+    (n, d) => n + d.periods.reduce((m, p) => m + p.drills.length, 0),
+    0,
+  );
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 print:hidden">
+        <div>
+          <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-2">
+            Practice Script
+          </p>
+          <h1 className="font-display text-3xl font-bold text-white">
+            Mon-Thu plan · Week of {script.weekOfMonday}
+          </h1>
+          <p className="text-slate-400 mt-2 max-w-2xl text-sm leading-relaxed">
+            {script.weekTheme}
+          </p>
+          <p className="text-xs text-slate-500 mt-2 tabular-nums">
+            {totalDrills} drill{totalDrills === 1 ? '' : 's'} across {script.days.length} days
+          </p>
+        </div>
+        <div className="flex items-center gap-2 md:shrink-0">
+          <Button
+            variant="outline"
+            onClick={handleCopy}
+            className="font-display text-xs uppercase tracking-widest"
+          >
+            {copyState === 'copied'
+              ? '✓ Copied'
+              : copyState === 'error'
+                ? 'Copy failed'
+                : 'Copy to clipboard'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => window.print()}
+            className="font-display text-xs uppercase tracking-widest"
+          >
+            Print
+          </Button>
+          <LazyPracticeScriptPDFButton script={script} />
+        </div>
+      </div>
+
+      {/* Print-only header */}
+      <div className="hidden print:block">
+        <h1 className="text-2xl font-bold text-black">
+          Practice Script — {script.opponentName}
+        </h1>
+        <p className="text-xs text-gray-600">
+          Week of {script.weekOfMonday} · Generated{' '}
+          {new Date(script.generatedAt).toLocaleDateString()}
+        </p>
+        <p className="text-sm mt-2 text-black">{script.weekTheme}</p>
+      </div>
+
+      {/* Day grid: 4 columns on wide, stacked on narrow */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {script.days.map((day) => {
+          const dayMinutes = day.periods.reduce((n, p) => n + p.durationMinutes, 0);
+          return (
+            <div
+              key={day.day}
+              className="glass-card rounded-xl p-5 space-y-4 border-l-2 border-l-cyan-500/50"
+            >
+              <div className="flex items-baseline justify-between">
+                <div>
+                  <h3 className="font-display text-lg font-bold text-white uppercase tracking-wide">
+                    {day.day}
+                  </h3>
+                  <p className="text-xs text-cyan-400 uppercase tracking-widest">
+                    {day.theme}
+                  </p>
+                </div>
+                <span className="text-xs text-slate-500 tabular-nums">
+                  {dayMinutes} min total
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {day.periods.map((period, pi) => (
+                  <div
+                    key={`${day.day}-${pi}`}
+                    className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="font-semibold text-sm text-white">{period.name}</p>
+                      <span className="text-[10px] text-slate-500 tabular-nums">
+                        {period.durationMinutes} min
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 italic">{period.focus}</p>
+                    {period.drills.length > 0 && (
+                      <ul className="space-y-1.5 pt-1">
+                        {period.drills.map((d, di) => (
+                          <li
+                            key={`${day.day}-${pi}-${di}`}
+                            className="text-xs space-y-0.5"
+                          >
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-cyan-400 shrink-0">•</span>
+                              <span className="text-slate-200 font-medium">
+                                {d.name}
+                              </span>
+                              <span className="text-[10px] text-slate-500 tabular-nums shrink-0">
+                                ×{d.reps}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 ml-4">
+                              Scout look: <span className="text-slate-400">{d.scoutLook}</span>
+                            </p>
+                            <p className="text-[11px] text-slate-500 ml-4">
+                              {d.rationale}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between pt-4 print:hidden">
+        <Button
+          variant="ghost"
+          onClick={onPrev}
+          className="font-display text-xs uppercase tracking-widest"
+        >
+          ← Back to summary
+        </Button>
+        <Button
+          onClick={onClose}
+          className="h-11 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest px-6"
+        >
+          Done
         </Button>
       </div>
     </div>

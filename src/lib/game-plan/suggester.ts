@@ -16,15 +16,17 @@
  */
 
 import { generateText, Output, gateway } from 'ai';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { withProgramContext } from '@/lib/db/client';
-import { playbookPlays } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { playbookPlays, walkthroughs } from '@/lib/db/schema';
 import {
   getPlayTypeDistribution,
   getFormationFrequency,
 } from '@/lib/tendencies/queries';
 import { log } from '@/lib/observability/log';
+import { bucketizeSituation } from '@/lib/scouting/call-sheet';
+import type { CallSheet } from '@/lib/scouting/insights';
 
 const SUGGESTER_MODEL = 'anthropic/claude-sonnet-4.6';
 
@@ -48,7 +50,65 @@ export interface SuggesterInput {
   distanceBucket?: string;
 }
 
+/**
+ * Try to answer from a cached walkthrough call sheet (zero AI cost).
+ * Returns null when no walkthrough exists or no bucket matches.
+ */
+async function tryCallSheetSuggestions(
+  programId: string,
+  opponentId: string,
+  situation: string,
+): Promise<PlaySuggestion[] | null> {
+  const [latest] = await withProgramContext(programId, async (tx) =>
+    tx
+      .select({ payload: walkthroughs.payload })
+      .from(walkthroughs)
+      .where(
+        and(
+          eq(walkthroughs.programId, programId),
+          eq(walkthroughs.opponentId, opponentId),
+          isNull(walkthroughs.gameId),
+        ),
+      )
+      .orderBy(desc(walkthroughs.createdAt))
+      .limit(1),
+  );
+  if (!latest?.payload) return null;
+
+  const callSheet = (latest.payload as { callSheet?: CallSheet }).callSheet;
+  if (!callSheet || callSheet.buckets.length === 0) return null;
+
+  const wantedBucket = bucketizeSituation(situation);
+  const matching = callSheet.buckets.find((b) => b.bucket === wantedBucket);
+  if (!matching || matching.recommendations.length === 0) return null;
+
+  log.info('suggester_call_sheet_hit', {
+    programId,
+    opponentId,
+    situation,
+    bucket: wantedBucket,
+    count: matching.recommendations.length,
+  });
+
+  return matching.recommendations.map((rec) => ({
+    playName: rec.call,
+    formation: '',
+    confidence: 'high' as const,
+    reasoning: rec.rationale,
+    attacksTendency: `from scouting walkthrough: ${rec.insightHeadline}`,
+  }));
+}
+
 export async function suggestPlays(input: SuggesterInput): Promise<PlaySuggestion[]> {
+  // Fast path: if a walkthrough call sheet covers this situation,
+  // return those recommendations instantly (no AI call).
+  const fromCallSheet = await tryCallSheetSuggestions(
+    input.programId,
+    input.opponentId,
+    input.situation,
+  );
+  if (fromCallSheet && fromCallSheet.length > 0) return fromCallSheet;
+
   // 1. Get opponent tendencies for this situation
   const filter = {
     opponentId: input.opponentId,

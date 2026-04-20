@@ -33,6 +33,10 @@ import {
   RUN_GAP_SYSTEM_PROMPT_V1,
   playerDetectionSchema,
   PLAYER_POSITIONS_SYSTEM_PROMPT_V1,
+  coverageDisguiseSchema,
+  COVERAGE_DISGUISE_SYSTEM_PROMPT_V1,
+  alignmentDepthSchema,
+  ALIGNMENT_DEPTH_SYSTEM_PROMPT_V1,
 } from '@/lib/ai/schemas';
 import type {
   CoverageShell,
@@ -41,6 +45,8 @@ import type {
   RouteConcept,
   RunGap,
   PlayerDetection,
+  CoverageDisguise,
+  AlignmentDepth,
 } from '@/lib/ai/schemas';
 import { log, beginSpan } from '@/lib/observability/log';
 
@@ -55,6 +61,8 @@ export interface CvPipelineResult {
   playId: string;
   coverageShell: EnsembleResult<CoverageShell> | null;
   pressure: EnsembleResult<PressureTag> | null;
+  coverageDisguise: EnsembleResult<CoverageDisguise> | null;
+  alignmentDepth: EnsembleResult<AlignmentDepth> | null;
   blockingScheme: EnsembleResult<BlockingScheme> | null;
   routeConcept: EnsembleResult<RouteConcept> | null;
   runGap: EnsembleResult<RunGap> | null;
@@ -105,6 +113,8 @@ export async function analyzePlay(input: CvPipelineInput): Promise<CvPipelineRes
     const [
       coverageShell,
       pressure,
+      coverageDisguise,
+      alignmentDepth,
       blockingScheme,
       routeConcept,
       runGap,
@@ -129,6 +139,28 @@ export async function analyzePlay(input: CvPipelineInput): Promise<CvPipelineRes
             frames: snapFrames.length > 0 ? snapFrames : postSnapFrames,
             schema: pressureSchema,
             context: 'This frame is from the moment of/just after the snap.',
+          })
+        : Promise.resolve(null),
+
+      // Defense: disguise / rotation (pre + post)
+      preAndPostFrames.length >= 2
+        ? runEnsemble<CoverageDisguise>({
+            taskName: 'coverage_disguise',
+            systemPrompt: COVERAGE_DISGUISE_SYSTEM_PROMPT_V1,
+            frames: preAndPostFrames,
+            schema: coverageDisguiseSchema,
+            context: 'Frame 1 is pre-snap; frame 2 is after coverage declares.',
+          })
+        : Promise.resolve(null),
+
+      // Defense: CB cushion + safety depth (pre-snap)
+      preSnapFrames.length > 0
+        ? runEnsemble<AlignmentDepth>({
+            taskName: 'alignment_depth',
+            systemPrompt: ALIGNMENT_DEPTH_SYSTEM_PROMPT_V1,
+            frames: preSnapFrames,
+            schema: alignmentDepthSchema,
+            context: 'Pre-snap defensive alignment — estimate cushion and safety depth.',
           })
         : Promise.resolve(null),
 
@@ -181,6 +213,8 @@ export async function analyzePlay(input: CvPipelineInput): Promise<CvPipelineRes
       playId: input.playId,
       coverageShell,
       pressure,
+      coverageDisguise,
+      alignmentDepth,
       blockingScheme,
       routeConcept,
       runGap,
@@ -191,6 +225,8 @@ export async function analyzePlay(input: CvPipelineInput): Promise<CvPipelineRes
     const accepted = [
       coverageShell?.accepted,
       pressure?.accepted,
+      coverageDisguise?.accepted,
+      alignmentDepth?.accepted,
       blockingScheme?.accepted,
       routeConcept?.accepted,
       runGap?.accepted,
@@ -200,6 +236,8 @@ export async function analyzePlay(input: CvPipelineInput): Promise<CvPipelineRes
     const total = [
       coverageShell,
       pressure,
+      coverageDisguise,
+      alignmentDepth,
       blockingScheme,
       routeConcept,
       runGap,
@@ -224,6 +262,8 @@ function emptyResult(playId: string): CvPipelineResult {
     playId,
     coverageShell: null,
     pressure: null,
+    coverageDisguise: null,
+    alignmentDepth: null,
     blockingScheme: null,
     routeConcept: null,
     runGap: null,

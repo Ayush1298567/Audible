@@ -105,7 +105,8 @@ export function reconcileMatchupJerseyRoles(
   const inconsistencies: JerseyRoleInconsistency[] = [];
   for (const [jersey, role] of dominant) {
     if ((reconCounts.get(jersey) ?? 0) === 0) continue;
-    const roleMap = counts.get(jersey)!;
+    const roleMap = counts.get(jersey);
+    if (!roleMap) continue;
     const total = [...roleMap.values()].reduce((s, v) => s + v, 0);
     inconsistencies.push({
       jersey,

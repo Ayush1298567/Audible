@@ -11,6 +11,7 @@ import type { Walkthrough } from '@/lib/scouting/insights';
 import type { TendencyBreakdown } from '@/lib/tendencies/queries';
 import type { DriveAnalysis } from '@/lib/tendencies/drive-analysis';
 import type { OpponentPlaybook } from '@/lib/tendencies/playbook-extraction';
+import type { CollegeOpponentScoutData } from '@/lib/scouting/college-scout';
 
 interface OverviewData {
   formation: TendencyBreakdown;
@@ -24,7 +25,7 @@ interface OverviewData {
 export default function OpponentScoutingPage() {
   const params = useParams();
   const opponentId = params.opponentId as string;
-  const { programId } = useProgram();
+  const { programId, programLevel } = useProgram();
   const [data, setData] = useState<OverviewData | null>(null);
   const [selfScout, setSelfScout] = useState<TendencyBreakdown[]>([]);
   const [opponentName, setOpponentName] = useState<string>('');
@@ -34,16 +35,50 @@ export default function OpponentScoutingPage() {
   const [isPlaybookLoading, setIsPlaybookLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [walkthrough, setWalkthrough] = useState<Walkthrough | null>(null);
+  const [cachedWalkthrough, setCachedWalkthrough] = useState<Walkthrough | null>(null);
+  const [cachedScript, setCachedScript] = useState<unknown>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [isBuildingWalkthrough, setIsBuildingWalkthrough] = useState(false);
+  const [scoutData, setScoutData] = useState<CollegeOpponentScoutData | null>(null);
+  const [scoutFetchedAt, setScoutFetchedAt] = useState<string | null>(null);
+  const [isScouting, setIsScouting] = useState(false);
+  const [scoutError, setScoutError] = useState<string | null>(null);
 
-  async function openWalkthrough() {
+  async function fetchEspnRoster() {
     if (!programId) return;
+    setIsScouting(true);
+    setScoutError(null);
+    try {
+      const res = await fetch('/api/scouting/college-roster', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ programId, opponentId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Roster fetch failed');
+      setScoutData(json.scoutData);
+      setScoutFetchedAt(json.opponent?.scoutDataFetchedAt ?? new Date().toISOString());
+    } catch (e) {
+      setScoutError(e instanceof Error ? e.message : 'Failed to fetch roster');
+    } finally {
+      setIsScouting(false);
+    }
+  }
+
+  async function openWalkthrough(opts: { regenerate?: boolean } = {}) {
+    if (!programId) return;
+    // Fast path: if we already have it cached and the user clicked "Reopen,"
+    // skip the network round-trip.
+    if (!opts.regenerate && cachedWalkthrough) {
+      setWalkthrough(cachedWalkthrough);
+      return;
+    }
     setIsBuildingWalkthrough(true);
     try {
       const res = await fetch('/api/scouting-walkthrough', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, opponentId }),
+        body: JSON.stringify({ programId, opponentId, regenerate: opts.regenerate }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -51,6 +86,8 @@ export default function OpponentScoutingPage() {
       }
       const wt = await res.json();
       setWalkthrough(wt);
+      setCachedWalkthrough(wt);
+      setCachedAt(new Date().toISOString());
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to build walkthrough');
     } finally {
@@ -61,18 +98,31 @@ export default function OpponentScoutingPage() {
   const load = useCallback(async () => {
     if (!programId || !opponentId) return;
     try {
-      const [overviewRes, selfScoutRes, opponentsRes] = await Promise.all([
+      const [overviewRes, selfScoutRes, opponentsRes, cachedWtRes] = await Promise.all([
         fetch(`/api/tendencies?programId=${programId}&opponentId=${opponentId}&type=overview`),
         fetch(`/api/tendencies?programId=${programId}&type=selfScout`),
         fetch(`/api/opponents?programId=${programId}`),
+        fetch(`/api/scouting-walkthrough?programId=${programId}&opponentId=${opponentId}`),
       ]);
       const overviewData = await overviewRes.json();
       const selfScoutData = await selfScoutRes.json();
       const opponentsData = await opponentsRes.json();
+      const cachedWtData = cachedWtRes.ok ? await cachedWtRes.json() : null;
+      if (cachedWtData?.walkthrough) {
+        setCachedWalkthrough(cachedWtData.walkthrough as Walkthrough);
+        setCachedScript(cachedWtData.practiceScript ?? null);
+        setCachedAt(cachedWtData.cachedAt ?? null);
+      }
       setData(overviewData);
       setSelfScout(selfScoutData.alerts ?? []);
       const opp = (opponentsData.opponents ?? []).find((o: { id: string }) => o.id === opponentId);
       setOpponentName(opp?.name ?? 'Unknown');
+      // Hydrate cached scout data (so the roster card persists across reloads)
+      if (opp?.scoutData) {
+        setScoutData(opp.scoutData as CollegeOpponentScoutData);
+        setScoutFetchedAt(opp.scoutDataFetchedAt ?? null);
+      }
+      // programLevel now comes from ProgramProvider context (Clerk org → program)
     } catch {
       // handled by empty state
     } finally {
@@ -144,7 +194,12 @@ export default function OpponentScoutingPage() {
     <div className="relative space-y-6 gradient-mesh noise-overlay">
 
       {walkthrough && (
-        <WalkthroughView walkthrough={walkthrough} onClose={() => setWalkthrough(null)} />
+        <WalkthroughView
+          walkthrough={walkthrough}
+          programId={programId ?? ''}
+          initialPracticeScript={cachedScript as Parameters<typeof WalkthroughView>[0]['initialPracticeScript']}
+          onClose={() => setWalkthrough(null)}
+        />
       )}
 
       {/* Page header */}
@@ -166,29 +221,97 @@ export default function OpponentScoutingPage() {
           </div>
         </div>
 
-        <Button
-          onClick={openWalkthrough}
-          disabled={isBuildingWalkthrough || data.formation.sampleSize === 0}
-          className="shrink-0 h-11 px-5 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest"
-        >
-          {isBuildingWalkthrough ? (
-            <span className="flex items-center gap-2">
-              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              Building walkthrough...
-            </span>
-          ) : (
-            <>
-              Walk me through this opponent
-              <svg className="ml-2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </>
+        <div className="flex shrink-0 items-center gap-2">
+          {programLevel && programLevel !== 'hs' && (
+            <Button
+              onClick={fetchEspnRoster}
+              disabled={isScouting}
+              variant="outline"
+              className="h-11 px-4 border-slate-700/60 bg-slate-900/40 hover:bg-slate-800/60 text-slate-200 font-display text-xs uppercase tracking-widest"
+            >
+              {isScouting ? 'Fetching...' : scoutData ? 'Refresh ESPN roster' : 'Fetch ESPN roster'}
+            </Button>
           )}
-        </Button>
+          {cachedWalkthrough && (
+            <Button
+              onClick={() => openWalkthrough({ regenerate: true })}
+              disabled={isBuildingWalkthrough}
+              variant="outline"
+              className="h-11 px-4 border-slate-700/60 bg-slate-900/40 hover:bg-slate-800/60 text-slate-200 font-display text-xs uppercase tracking-widest"
+              title={cachedAt ? `Last built ${new Date(cachedAt).toLocaleString()}` : undefined}
+            >
+              Regenerate
+            </Button>
+          )}
+          <Button
+            onClick={() => openWalkthrough()}
+            disabled={isBuildingWalkthrough || data.formation.sampleSize === 0}
+            className="h-11 px-5 bg-cyan-600 hover:bg-cyan-500 text-white font-display text-xs uppercase tracking-widest"
+          >
+            {isBuildingWalkthrough ? (
+              <span className="flex items-center gap-2">
+                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Building walkthrough...
+              </span>
+            ) : (
+              <>
+                {cachedWalkthrough ? 'Reopen walkthrough' : 'Walk me through this opponent'}
+                <svg className="ml-2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </>
+            )}
+          </Button>
+        </div>
       </div>
+
+      {scoutError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {scoutError}
+        </div>
+      )}
+
+      {scoutData && (
+        <div className="glass-card rounded-xl border border-slate-700/50 p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="font-display text-xs uppercase tracking-widest text-cyan-400 mb-1">
+                ESPN public roster
+              </p>
+              <h3 className="font-display text-lg font-bold text-white">{scoutData.team.displayName}</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                {[scoutData.team.conference, scoutData.team.record].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            <div className="text-right text-xs text-slate-500">
+              {scoutData.headCoach && (
+                <p>HC: <span className="text-slate-300">{scoutData.headCoach.name}</span></p>
+              )}
+              {scoutFetchedAt && (
+                <p className="mt-1">Fetched {new Date(scoutFetchedAt).toLocaleDateString()}</p>
+              )}
+              <p className="mt-1">{scoutData.roster.length} players</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 max-h-64 overflow-y-auto">
+            {scoutData.roster.map((p) => (
+              <div
+                key={`${p.jersey}-${p.name}`}
+                className="rounded border border-slate-800 bg-slate-900/40 px-2 py-1.5 text-xs"
+              >
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-mono text-cyan-400">#{p.jersey}</span>
+                  <span className="text-[10px] uppercase text-slate-500">{p.position}</span>
+                </div>
+                <div className="truncate text-slate-300">{p.name}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Gradient divider */}
       <div className="h-px bg-gradient-to-r from-blue-500/50 via-cyan-500/30 to-transparent" />

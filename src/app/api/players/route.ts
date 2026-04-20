@@ -3,6 +3,7 @@ import { players } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 const createPlayerSchema = z.object({
   programId: z.string().uuid(),
@@ -19,6 +20,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = createPlayerSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     // Generate a 6-character join code
     const joinCode = generateJoinCode();
@@ -46,6 +48,9 @@ export async function POST(req: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to create player' }, { status: 500 });
   }
 }
@@ -60,6 +65,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId is required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const result = await withProgramContext(programId, async (tx) =>
       tx
@@ -73,6 +79,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ players: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch players' }, { status: 500 });
   }
 }

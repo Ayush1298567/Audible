@@ -9,40 +9,28 @@ import { CommandBar } from '@/components/layout/command-bar';
 import { ErrorBoundary } from '@/components/shared/error-boundary';
 
 /**
- * Dashboard guard — requires Clerk authentication AND a program.
+ * Dashboard guard — requires Clerk authentication AND a linked program.
  *
  * Flow:
- *   1. Clerk middleware (proxy.ts) handles auth — unauthenticated users
- *      never reach this layout.
- *   2. This guard checks if the user has a program set up.
+ *   1. Clerk middleware handles auth — unauthenticated users never
+ *      reach this layout.
+ *   2. ProgramProvider resolves the Clerk org → programId via
+ *      /api/programs (server-validated).
  *   3. If no program → redirect to /setup.
- *   4. Dev mode (?dev=true) auto-creates a test program for quick testing.
  */
 
 function DashboardGuard({ children }: { children: React.ReactNode }) {
-  const { programId, isLoading, setProgramId } = useProgram();
+  const { programId, isLoading } = useProgram();
   const { isLoaded: isUserLoaded } = useUser();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (isLoading || !isUserLoaded) return;
-
-    // Always fetch the best program and set it
-    fetch('/api/programs')
-      .then((res) => res.json())
-      .then((data) => {
-        const best = data.programs?.[0]; // sorted by play count desc
-        if (best) {
-          setProgramId(best.id, best.name);
-        } else {
-          router.replace('/setup');
-        }
-      })
-      .catch(() => {
-        if (!programId) router.replace('/setup');
-      });
-  }, [isLoading, isUserLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!programId) {
+      router.replace('/setup');
+    }
+  }, [isLoading, isUserLoaded, programId, router]);
 
   if (isLoading || !isUserLoaded) {
     return (

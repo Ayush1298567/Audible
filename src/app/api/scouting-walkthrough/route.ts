@@ -1,5 +1,5 @@
 import { gateway, generateText, Output } from 'ai';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   aggregateByPlayType,
@@ -15,13 +15,20 @@ import {
 } from '@/lib/cv/track-analytics';
 import { reconcileMatchupJerseyRoles } from '@/lib/cv/track-consistency';
 import { withProgramContext } from '@/lib/db/client';
-import { games, opponents, plays } from '@/lib/db/schema';
-import { beginSpan } from '@/lib/observability/log';
+import { games, opponents, plays, walkthroughs } from '@/lib/db/schema';
+import { beginSpan, log } from '@/lib/observability/log';
 import { buildCallSheet } from '@/lib/scouting/call-sheet';
+import {
+  validateRosterClaim,
+  type CollegeOpponentScoutData,
+} from '@/lib/scouting/college-scout';
 import type { InsightExample, Walkthrough } from '@/lib/scouting/insights';
 import { buildAnalyticsHeader } from '@/lib/scouting/prompt-headers';
+import { AuthError, requireCoachForProgram } from '@/lib/auth/guards';
+import { getModel } from '@/lib/ai/model-policy';
 
 export const maxDuration = 180;
+const SCOUTING_WALKTHROUGH_MODEL = getModel('scoutingWalkthrough');
 
 /**
  * POST /api/scouting-walkthrough
@@ -40,6 +47,12 @@ const requestSchema = z.object({
    * game we have film for against this opponent.
    */
   gameId: z.string().uuid().optional(),
+  /**
+   * When true, regenerate from scratch (burn the Claude tokens). When
+   * false / omitted, return the latest cached walkthrough for this
+   * (program, opponent, gameId) tuple if one exists.
+   */
+  regenerate: z.boolean().optional(),
 });
 
 // The schema Claude returns. We'll map to the front-end Walkthrough type.
@@ -217,17 +230,51 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = requestSchema.parse(body);
+    await requireCoachForProgram(input.programId);
 
-    // Load opponent info
+    // Load opponent info — including any cached scout data so we can
+    // reject Claude references to players not on the published roster.
     const [opp] = await withProgramContext(input.programId, async (tx) =>
       tx
-        .select({ id: opponents.id, name: opponents.name })
+        .select({
+          id: opponents.id,
+          name: opponents.name,
+          scoutData: opponents.scoutData,
+        })
         .from(opponents)
         .where(and(eq(opponents.id, input.opponentId), eq(opponents.programId, input.programId))),
     );
 
     if (!opp) {
       return Response.json({ error: 'Opponent not found' }, { status: 404 });
+    }
+
+    // Cached-walkthrough fast path. Generation is expensive (~1 Claude
+    // call with all per-play CV data in context) — coaches typically
+    // open the walkthrough multiple times during the week. Return the
+    // most recent persisted walkthrough for this scope unless the
+    // caller explicitly asked to regenerate.
+    if (!input.regenerate) {
+      const [cached] = await withProgramContext(input.programId, async (tx) =>
+        tx
+          .select({ payload: walkthroughs.payload })
+          .from(walkthroughs)
+          .where(
+            and(
+              eq(walkthroughs.programId, input.programId),
+              eq(walkthroughs.opponentId, input.opponentId),
+              input.gameId
+                ? eq(walkthroughs.gameId, input.gameId)
+                : isNull(walkthroughs.gameId),
+            ),
+          )
+          .orderBy(desc(walkthroughs.createdAt))
+          .limit(1),
+      );
+      if (cached?.payload) {
+        span.done({ opponentId: opp.id, cached: true });
+        return Response.json(cached.payload);
+      }
     }
 
     // Load all analyzed plays for this opponent
@@ -472,7 +519,7 @@ export async function POST(req: Request): Promise<Response> {
     // bucket that's really a single fluke.
     const reconciled = reconcileMatchupJerseyRoles(parsedAnalytics);
     if (reconciled.inconsistencies.length > 0) {
-      console.log('walkthrough_jersey_role_reconciled', {
+      log.info('walkthrough_jersey_role_reconciled', {
         inconsistencies: reconciled.inconsistencies,
       });
     }
@@ -504,7 +551,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Ask Claude to curate the walkthrough
     const { output } = await generateText({
-      model: gateway('anthropic/claude-sonnet-4.6'),
+      model: gateway(SCOUTING_WALKTHROUGH_MODEL),
       system: SYSTEM_PROMPT,
       prompt: `Opponent: ${opp.name}\nScope: ${input.gameId ? 'single game (scouting their most recent look)' : 'every game we have film for'}\nTotal plays analyzed: ${allPlays.length}${allPlays.length > playsForPrompt.length ? ` (showing top ${playsForPrompt.length} most informative below — aggregated headers above cover all ${allPlays.length})` : ''}${analyticsHeader}\n\nPlay data (JSON, with per-play CV measurements where available):\n${JSON.stringify(playsForPrompt, null, 2)}\n\nIdentify the 3-5 most exploitable tendencies. Cite CV measurements (peakSpeedYps, maxDepthYards, playDurationSec) in your narrative when they sharpen the insight. For each tendency, pick 2-3 evidence play IDs and provide visual overlays.`,
       output: Output.object({ schema: responseSchema }),
@@ -529,11 +576,18 @@ export async function POST(req: Request): Promise<Response> {
       if (o.trust === 'high' && o.jersey) namedPlayers.add(`${o.role}#${o.jersey}`);
     }
 
+    // If we have a scouted roster (college only — HS opponents never get
+    // scoutData), use it as a second hard gate. A jersey passing trust=high
+    // in our pipeline but not appearing on the published roster usually
+    // means OCR landed on a number that doesn't exist on this team — drop it.
+    const scoutedRoster =
+      (opp.scoutData as CollegeOpponentScoutData | null | undefined)?.roster;
+
     const validatedInsights = output.insights.filter((ins) => {
       // Drop insights whose evidence references unknown play IDs
       const allEvidenceValid = ins.evidence_play_ids.every((id) => validPlayIds.has(id));
       if (!allEvidenceValid) {
-        console.warn('walkthrough_dropped_hallucinated_play', {
+        log.warn('walkthrough_dropped_hallucinated_play', {
           headline: ins.headline,
           ids: ins.evidence_play_ids,
         });
@@ -546,12 +600,24 @@ export async function POST(req: Request): Promise<Response> {
       for (const m of playerRefs) {
         const role = m[1];
         const jersey = m[2];
+        if (!role || !jersey) continue;
         if (!namedPlayers.has(`${role}#${jersey}`)) {
-          console.warn('walkthrough_dropped_unverified_player_reference', {
+          log.warn('walkthrough_dropped_unverified_player_reference', {
             headline: ins.headline,
             playerRef: `${role} #${jersey}`,
           });
           return false;
+        }
+        if (scoutedRoster) {
+          const reason = validateRosterClaim(scoutedRoster, role, jersey);
+          if (reason) {
+            log.warn('walkthrough_dropped_off_roster_reference', {
+              headline: ins.headline,
+              playerRef: `${role} #${jersey}`,
+              reason,
+            });
+            return false;
+          }
         }
       }
 
@@ -670,15 +736,37 @@ export async function POST(req: Request): Promise<Response> {
     // Pure post-processing — no extra AI cost.
     walkthrough.callSheet = buildCallSheet(walkthrough.insights);
 
+    // Cache the result so the next page load doesn't re-pay Claude tokens.
+    // The id is round-tripped to the client so the practice-script route
+    // can attach to the same row.
+    const [persisted] = await withProgramContext(input.programId, async (tx) =>
+      tx
+        .insert(walkthroughs)
+        .values({
+          programId: input.programId,
+          opponentId: input.opponentId,
+          gameId: input.gameId ?? null,
+          payload: walkthrough,
+        })
+        .returning({ id: walkthroughs.id }),
+    );
+
     span.done({
       opponentId: opp.id,
+      walkthroughId: persisted?.id,
       insights: walkthrough.insights.length,
       callSheetBuckets: walkthrough.callSheet.buckets.length,
+      model: SCOUTING_WALKTHROUGH_MODEL,
+      promptPlayCount: playsForPrompt.length,
+      totalPlayCount: allPlays.length,
     });
 
-    return Response.json(walkthrough);
+    return Response.json({ ...walkthrough, walkthroughId: persisted?.id });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     const msg = error instanceof Error ? error.message : 'Failed';
     return Response.json({ error: msg }, { status: 500 });
   }
@@ -691,4 +779,75 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 50);
+}
+
+/**
+ * GET /api/scouting-walkthrough?programId=X&opponentId=Y[&gameId=Z]
+ *
+ * Returns the latest cached walkthrough for this scope, or 404 if none
+ * exists. The opponent page hits this on mount so the coach can reopen
+ * a previously-built walkthrough without paying for another Claude call.
+ */
+export async function GET(req: Request): Promise<Response> {
+  const span = beginSpan(
+    { route: '/api/scouting-walkthrough', method: 'GET' },
+    req,
+  );
+  try {
+    const url = new URL(req.url);
+    const programId = url.searchParams.get('programId');
+    const opponentId = url.searchParams.get('opponentId');
+    const gameId = url.searchParams.get('gameId');
+
+    if (!programId || !opponentId) {
+      return Response.json(
+        { error: 'programId and opponentId are required' },
+        { status: 400 },
+      );
+    }
+    await requireCoachForProgram(programId);
+
+    const [latest] = await withProgramContext(programId, async (tx) =>
+      tx
+        .select({
+          id: walkthroughs.id,
+          payload: walkthroughs.payload,
+          practiceScript: walkthroughs.practiceScript,
+          createdAt: walkthroughs.createdAt,
+        })
+        .from(walkthroughs)
+        .where(
+          and(
+            eq(walkthroughs.programId, programId),
+            eq(walkthroughs.opponentId, opponentId),
+            gameId
+              ? eq(walkthroughs.gameId, gameId)
+              : isNull(walkthroughs.gameId),
+          ),
+        )
+        .orderBy(desc(walkthroughs.createdAt))
+        .limit(1),
+    );
+
+    if (!latest) {
+      span.done({ found: false });
+      return Response.json({ walkthrough: null });
+    }
+
+    span.done({ found: true, walkthroughId: latest.id });
+    return Response.json({
+      walkthrough: { ...(latest.payload as object), walkthroughId: latest.id },
+      practiceScript: latest.practiceScript,
+      cachedAt: latest.createdAt,
+    });
+  } catch (error) {
+    span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Lookup failed' },
+      { status: 500 },
+    );
+  }
 }

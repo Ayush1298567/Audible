@@ -27,7 +27,7 @@
 
 import { sql, eq, and, type SQL } from 'drizzle-orm';
 import { withProgramContext } from '@/lib/db/client';
-import { plays, games } from '@/lib/db/schema';
+import { plays, games, cvTags } from '@/lib/db/schema';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -120,6 +120,114 @@ export async function getPlayTypeDistribution(
   filter: SituationFilter,
 ): Promise<TendencyBreakdown> {
   return groupByColumn(programId, filter, 'playType', 'Play Type Distribution');
+}
+
+/**
+ * CV-backed coverage shell distribution (surfaced tags only).
+ */
+export async function getCvCoverageShellDistribution(
+  programId: string,
+  filter: SituationFilter,
+): Promise<TendencyBreakdown> {
+  const conditions = buildWhereClause(programId, filter);
+
+  const rows = await withProgramContext(programId, async (tx) =>
+    tx
+      .select({
+        label: sql<string>`coalesce(${cvTags.value}->>'coverage', 'unknown')`,
+        playId: plays.id,
+      })
+      .from(cvTags)
+      .innerJoin(plays, eq(cvTags.playId, plays.id))
+      .leftJoin(games, eq(plays.gameId, games.id))
+      .where(
+        and(
+          eq(cvTags.programId, programId),
+          eq(cvTags.tagType, 'coverage_shell'),
+          eq(cvTags.isSurfaced, true),
+          ...conditions,
+        ),
+      ),
+  );
+
+  const groups: Record<string, string[]> = {};
+  for (const row of rows) {
+    const key = row.label || 'unknown';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(row.playId);
+  }
+
+  const total = rows.length;
+  const tendencies: TendencyResult[] = Object.entries(groups)
+    .map(([label, playIds]) => ({
+      label,
+      count: playIds.length,
+      total,
+      rate: total > 0 ? playIds.length / total : 0,
+      playIds,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
+    situation: 'CV Coverage Shell',
+    tendencies,
+    sampleSize: total,
+    confidence: confidenceFromCount(total),
+  };
+}
+
+/**
+ * CV-backed pressure type distribution (surfaced tags only).
+ */
+export async function getCvPressureTypeDistribution(
+  programId: string,
+  filter: SituationFilter,
+): Promise<TendencyBreakdown> {
+  const conditions = buildWhereClause(programId, filter);
+
+  const rows = await withProgramContext(programId, async (tx) =>
+    tx
+      .select({
+        label: sql<string>`coalesce(${cvTags.value}->>'type', 'unknown')`,
+        playId: plays.id,
+      })
+      .from(cvTags)
+      .innerJoin(plays, eq(cvTags.playId, plays.id))
+      .leftJoin(games, eq(plays.gameId, games.id))
+      .where(
+        and(
+          eq(cvTags.programId, programId),
+          eq(cvTags.tagType, 'pressure_type'),
+          eq(cvTags.isSurfaced, true),
+          ...conditions,
+        ),
+      ),
+  );
+
+  const groups: Record<string, string[]> = {};
+  for (const row of rows) {
+    const key = row.label || 'unknown';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(row.playId);
+  }
+
+  const total = rows.length;
+  const tendencies: TendencyResult[] = Object.entries(groups)
+    .map(([label, playIds]) => ({
+      label,
+      count: playIds.length,
+      total,
+      rate: total > 0 ? playIds.length / total : 0,
+      playIds,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
+    situation: 'CV Pressure Type',
+    tendencies,
+    sampleSize: total,
+    confidence: confidenceFromCount(total),
+  };
 }
 
 /**

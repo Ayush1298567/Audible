@@ -107,22 +107,55 @@ export default function FieldPage() {
   // Load tendencies
   const loadTendencies = useCallback(async () => {
     if (!programId || !selectedOpponent) return;
-    const params = new URLSearchParams({ programId, opponentId: selectedOpponent, type: 'overview' });
-    const res = await fetch(`/api/tendencies?${params}`);
-    const data = await res.json();
+    const overviewParams = new URLSearchParams({
+      programId,
+      opponentId: selectedOpponent,
+      type: 'overview',
+    });
+    const cvParams = new URLSearchParams({
+      programId,
+      opponentId: selectedOpponent,
+      type: 'cvDefense',
+    });
 
-    const coverageRates = (data.formation?.tendencies ?? []).map(
-      (t: { label: string; rate: number }) => ({ coverage: t.label.toLowerCase().replace(/ /g, '_'), rate: t.rate }),
-    );
-    const pressureRates = (data.playType?.tendencies ?? []).map(
-      (t: { label: string; rate: number }) => ({ type: t.label.toLowerCase().replace(/ /g, '_'), rate: t.rate }),
-    );
+    const [overviewRes, cvRes] = await Promise.all([
+      fetch(`/api/tendencies?${overviewParams}`),
+      fetch(`/api/tendencies?${cvParams}`),
+    ]);
+    const data = await overviewRes.json();
+    const cv = await cvRes.json();
+
+    const mapCoverage = (tendencies: Array<{ label: string; rate: number }>) =>
+      tendencies.map((t) => ({
+        coverage: t.label.toLowerCase().replace(/ /g, '_'),
+        rate: t.rate,
+      }));
+
+    const mapPressure = (tendencies: Array<{ label: string; rate: number }>) =>
+      tendencies.map((t) => ({
+        type: t.label.toLowerCase().replace(/ /g, '_'),
+        rate: t.rate,
+      }));
+
+    const cvCov = cv.coverage?.tendencies as Array<{ label: string; rate: number }> | undefined;
+    const cvPres = cv.pressure?.tendencies as Array<{ label: string; rate: number }> | undefined;
+
+    const coverageRates =
+      cvCov && cvCov.length > 0
+        ? mapCoverage(cvCov)
+        : [{ coverage: 'cover_3', rate: 0.34 }, { coverage: 'cover_2', rate: 0.33 }, { coverage: 'cover_1', rate: 0.33 }];
+
+    const pressureRates =
+      cvPres && cvPres.length > 0
+        ? mapPressure(cvPres)
+        : [{ type: 'base_4', rate: 0.6 }, { type: 'lb_blitz', rate: 0.3 }, { type: 'db_blitz', rate: 0.1 }];
+
     const runT = data.playType?.tendencies?.find((t: { label: string }) => t.label.toLowerCase().includes('run'));
     const passT = data.playType?.tendencies?.find((t: { label: string }) => t.label.toLowerCase().includes('pass'));
 
     setTendencies({
-      coverageRates: coverageRates.length > 0 ? coverageRates : [{ coverage: 'cover_3', rate: 0.4 }, { coverage: 'cover_2', rate: 0.3 }, { coverage: 'cover_1', rate: 0.3 }],
-      pressureRates: pressureRates.length > 0 ? pressureRates : [{ type: 'base_4', rate: 0.6 }, { type: 'lb_blitz', rate: 0.3 }, { type: 'db_blitz', rate: 0.1 }],
+      coverageRates,
+      pressureRates,
       runRate: runT?.rate ?? 0.5,
       passRate: passT?.rate ?? 0.5,
     });

@@ -4,6 +4,8 @@ import { beginSpan } from '@/lib/observability/log';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { analyzeYouTubePlay } from '@/lib/cv/youtube-analyzer';
+import { AuthError, requireCoachRoleForProgram } from '@/lib/auth/guards';
+import { getActivePromptId } from '@/lib/prompts/active-prompts';
 
 const playSchema = z.object({
   startSeconds: z.number(),
@@ -31,6 +33,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = requestSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const youtubeBaseUrl = `https://www.youtube.com/embed/${input.videoId}`;
     let inserted = 0;
@@ -121,25 +124,25 @@ export async function POST(req: Request): Promise<Response> {
                 }).where(eq(plays.id, playInfo.id));
               }
 
-              // Store CV tag for coverage detection
-              await tx.insert(cvTags).values({
-                programId: input.programId,
-                playId: playInfo.id,
-                tagType: 'coverage_shell',
-                value: {
-                  coverage: analysis.coverageShell,
-                  reasoning: analysis.reasoning,
-                  observations: analysis.keyObservations,
-                },
-                promptId: '00000000-0000-0000-0000-000000000000', // placeholder until prompt versioning
-                anthropicConfidence: analysis.confidence,
-                openaiConfidence: null,
-                ensembleConfidence: analysis.confidence,
-                modelsAgreed: true,
-                isSurfaced: analysis.confidence >= 0.7,
-              }).catch(() => {
-                // CV tag insert may fail if promptId FK doesn't exist — that's OK for now
-              });
+              const coveragePromptId = await getActivePromptId('coverage_shell');
+              if (coveragePromptId) {
+                await tx.insert(cvTags).values({
+                  programId: input.programId,
+                  playId: playInfo.id,
+                  tagType: 'coverage_shell',
+                  value: {
+                    coverage: analysis.coverageShell,
+                    reasoning: analysis.reasoning,
+                    observations: analysis.keyObservations,
+                  },
+                  promptId: coveragePromptId,
+                  anthropicConfidence: analysis.confidence,
+                  openaiConfidence: null,
+                  ensembleConfidence: analysis.confidence,
+                  modelsAgreed: true,
+                  isSurfaced: analysis.confidence >= 0.7,
+                });
+              }
             });
 
             aiAnalyzed++;
@@ -169,6 +172,9 @@ export async function POST(req: Request): Promise<Response> {
     }, { status: 201 });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }

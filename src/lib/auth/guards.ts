@@ -114,3 +114,34 @@ export async function requireCoachRole(minRole: CoachRole): Promise<CoachSession
 export async function requireHeadCoach(): Promise<CoachSession> {
   return requireCoachRole('head_coach');
 }
+
+/**
+ * Require that the requested programId matches the authenticated coach's
+ * active organization. This prevents callers from passing arbitrary UUIDs
+ * and attempting cross-program reads/writes.
+ */
+export async function requireCoachForProgram(programId: string): Promise<CoachSession> {
+  const session = await requireCoach();
+
+  if (session.programId !== programId) {
+    throw new AuthError('Forbidden: program mismatch', 403);
+  }
+
+  return session;
+}
+
+/**
+ * Same as requireCoachForProgram, but enforces a minimum role.
+ */
+export async function requireCoachRoleForProgram(
+  minRole: CoachRole,
+  programId: string,
+): Promise<CoachSession> {
+  const session = await requireCoachRole(minRole);
+
+  if (session.programId !== programId) {
+    throw new AuthError('Forbidden: program mismatch', 403);
+  }
+
+  return session;
+}

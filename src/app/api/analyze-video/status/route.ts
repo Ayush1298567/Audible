@@ -3,6 +3,7 @@ import { getRun } from 'workflow/api';
 import { withProgramContext } from '@/lib/db/client';
 import { plays } from '@/lib/db/schema';
 import { eq, and, gte, sql } from 'drizzle-orm';
+import { AuthError, requireCoachForProgram } from '@/lib/auth/guards';
 
 /**
  * GET /api/analyze-video/status?runId=XXX&programId=YYY&gameId=ZZZ
@@ -24,6 +25,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!runId || !programId || !gameId) {
       return Response.json({ error: 'runId, programId, gameId all required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     // Get workflow status
     const run = await getRun(runId);
@@ -64,6 +66,9 @@ export async function GET(req: Request): Promise<Response> {
     });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     const msg = error instanceof Error ? error.message : 'Failed';
     return Response.json({ error: msg }, { status: 500 });
   }

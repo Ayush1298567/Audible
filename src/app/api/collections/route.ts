@@ -3,6 +3,7 @@ import { collections, collectionPlays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
 // ─── GET: List collections for a program ────────────────────────
 
@@ -15,6 +16,7 @@ export async function GET(req: Request): Promise<Response> {
     if (!programId) {
       return Response.json({ error: 'programId required' }, { status: 400 });
     }
+    await requireCoachForProgram(programId);
 
     const result = await withProgramContext(programId, async (tx) =>
       tx
@@ -37,6 +39,9 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ collections: result });
   } catch (error) {
     span.fail(error);
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to fetch collections' }, { status: 500 });
   }
 }
@@ -55,6 +60,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = createSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     const [collection] = await withProgramContext(input.programId, async (tx) =>
       tx
@@ -73,6 +79,9 @@ export async function POST(req: Request): Promise<Response> {
     span.fail(error);
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
     return Response.json({ error: 'Failed to create collection' }, { status: 500 });
   }
@@ -93,6 +102,7 @@ export async function PATCH(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = modifySchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     await withProgramContext(input.programId, async (tx) => {
       if (input.action === 'add') {
@@ -122,6 +132,9 @@ export async function PATCH(req: Request): Promise<Response> {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
     }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     return Response.json({ error: 'Failed to modify collection' }, { status: 500 });
   }
 }
@@ -139,6 +152,7 @@ export async function DELETE(req: Request): Promise<Response> {
   try {
     const body = await req.json();
     const input = deleteSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
 
     await withProgramContext(input.programId, async (tx) =>
       tx
@@ -157,6 +171,9 @@ export async function DELETE(req: Request): Promise<Response> {
     span.fail(error);
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
     }
     return Response.json({ error: 'Failed to delete collection' }, { status: 500 });
   }

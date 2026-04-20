@@ -18,18 +18,20 @@ interface Play {
 }
 
 export default function PlayerFilmPage() {
-  const { session } = usePlayerSession();
+  const { session, authFetch } = usePlayerSession();
   const [plays, setPlays] = useState<Play[]>([]);
   const [selectedPlay, setSelectedPlay] = useState<Play | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!session) return;
-    const res = await fetch(`/api/player-data?programId=${session.programId}&type=film`);
+    const res = await authFetch(
+      `/api/player-data?programId=${session.programId}&playerId=${session.playerId}&type=film`,
+    );
     const data = await res.json();
     setPlays(data.plays ?? []);
     setIsLoading(false);
-  }, [session]);
+  }, [session, authFetch]);
 
   useEffect(() => { void load(); }, [load]);
 

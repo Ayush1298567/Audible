@@ -96,6 +96,9 @@ For each play extract:
 - yardsGained: actual yards gained/lost
 - result: plain English result
 
+When the input is only a segment of a longer game, startSeconds and endSeconds must be measured from
+the beginning of the provided clip (t=0 at the first frame of this clip).
+
 Be precise with timestamps — start_seconds should be within 1 second of when the pre-snap
 alignment becomes clear. Report honest confidence levels.`;
 
@@ -108,11 +111,18 @@ export interface BoundaryDetectionResult {
   notes: string;
 }
 
+export interface BufferBoundaryContext {
+  /** Where this clip begins in the parent video (for logging / notes only) */
+  segmentStartSeconds?: number;
+  segmentDurationSeconds?: number;
+}
+
 /**
- * Upload a video to Gemini's File API and analyze it for play boundaries.
+ * Analyze an in-memory MP4 buffer (full game or a chunk) for play boundaries.
  */
-export async function detectPlayBoundaries(
-  options: BoundaryDetectionOptions,
+export async function detectPlayBoundariesFromBuffer(
+  videoBuffer: Buffer,
+  ctx?: BufferBoundaryContext,
 ): Promise<BoundaryDetectionResult> {
   const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -121,22 +131,17 @@ export async function detectPlayBoundaries(
 
   const ai = new GoogleGenAI({ apiKey });
 
-  // Step 1: Fetch the video from Blob
-  const videoResponse = await fetch(options.videoBlobUrl);
-  if (!videoResponse.ok) {
-    throw new Error(`Failed to fetch video: ${videoResponse.status}`);
-  }
-  const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
-
-  // Step 2: Upload to Gemini File API (not blocked by request size limits)
   log.info('gemini_file_upload_start', { sizeBytes: videoBuffer.length });
   const uploadStart = Date.now();
 
   const uploadedFile = await ai.files.upload({
-    file: new Blob([videoBuffer], { type: 'video/mp4' }),
+    file: new Blob([new Uint8Array(videoBuffer)], { type: 'video/mp4' }),
     config: {
       mimeType: 'video/mp4',
-      displayName: 'game-film',
+      displayName:
+        ctx?.segmentStartSeconds != null
+          ? `game-film-${Math.floor(ctx.segmentStartSeconds)}s`
+          : 'game-film',
     },
   });
 
@@ -145,7 +150,6 @@ export async function detectPlayBoundaries(
     uploadMs: Date.now() - uploadStart,
   });
 
-  // Step 3: Wait for file to be processed (state: PROCESSING → ACTIVE)
   let file: GeminiFile = uploadedFile;
   while (file.state === 'PROCESSING') {
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -163,7 +167,11 @@ export async function detectPlayBoundaries(
 
   log.info('gemini_file_ready', { fileUri: file.uri });
 
-  // Step 4: Generate content using the file URI
+  const segmentHint =
+    ctx?.segmentStartSeconds != null && ctx.segmentDurationSeconds != null
+      ? ` This clip is ${Math.round(ctx.segmentDurationSeconds)}s long and starts at ${Math.round(ctx.segmentStartSeconds)}s in the full game. Timestamps must be relative to the first frame of THIS clip.`
+      : '';
+
   const genStart = Date.now();
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
@@ -178,7 +186,7 @@ export async function detectPlayBoundaries(
             },
           },
           {
-            text: 'Analyze this game film. Identify every live football play with precise timestamps.',
+            text: `Analyze this game film. Identify every live football play with precise timestamps.${segmentHint}`,
           },
         ],
       },
@@ -200,7 +208,6 @@ export async function detectPlayBoundaries(
   const parsed = JSON.parse(text);
   const plays = z.array(detectedPlaySchema).parse(parsed.plays);
 
-  // Clean up the uploaded file (optional — they expire in 48h anyway)
   if (file.name) {
     await ai.files.delete({ name: file.name }).catch(() => {});
   }
@@ -209,4 +216,18 @@ export async function detectPlayBoundaries(
     plays,
     notes: parsed.notes ?? '',
   };
+}
+
+/**
+ * Upload a video to Gemini's File API and analyze it for play boundaries.
+ */
+export async function detectPlayBoundaries(
+  options: BoundaryDetectionOptions,
+): Promise<BoundaryDetectionResult> {
+  const videoResponse = await fetch(options.videoBlobUrl);
+  if (!videoResponse.ok) {
+    throw new Error(`Failed to fetch video: ${videoResponse.status}`);
+  }
+  const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
+  return detectPlayBoundariesFromBuffer(videoBuffer);
 }

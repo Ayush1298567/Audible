@@ -164,9 +164,62 @@ export const opponents = pgTable(
     name: text('name').notNull(),
     city: text('city'),
     state: varchar('state', { length: 2 }),
+    /**
+     * Public scouting data fetched from third-party sources (ESPN, etc.).
+     * COLLEGE PROGRAMS ONLY — never populated for HS opponents (minors).
+     * Shape: CollegeOpponentScoutData from src/lib/scouting/college-scout.ts.
+     * Used for jersey/role validation in the walkthrough hallucination guards.
+     */
+    scoutData: jsonb('scout_data'),
+    /** When scoutData was last refreshed. Null = never fetched. */
+    scoutDataFetchedAt: timestamp('scout_data_fetched_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('opponents_program_idx').on(t.programId)],
+);
+
+// ─── Walkthroughs (cached AI-generated game plans) ──────────────
+
+/**
+ * Persisted scouting walkthroughs + their derived practice scripts.
+ *
+ * Generating a walkthrough is expensive (one Claude call with all the
+ * opponent's analyzed plays in context). Persisting lets the coach
+ * reopen the same walkthrough across page loads / sessions without
+ * paying the token cost again, and gives us a regenerate-only-when-asked
+ * flow on the UI.
+ *
+ * gameId is nullable — null means "across every game we have on this
+ * opponent." A specific gameId scopes the walkthrough to one film.
+ *
+ * payload shape: src/lib/scouting/insights.ts → Walkthrough
+ * practiceScript shape: src/lib/scouting/practice-script.ts → PracticeScript
+ */
+export const walkthroughs = pgTable(
+  'walkthroughs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    opponentId: uuid('opponent_id')
+      .notNull()
+      .references(() => opponents.id, { onDelete: 'cascade' }),
+    /** Optional scope: when set, walkthrough was built from a single game's film. */
+    gameId: uuid('game_id'),
+    /** Full Walkthrough JSON (insights, examples, callSheet, etc.). */
+    payload: jsonb('payload').notNull(),
+    /** Optional PracticeScript JSON, attached after the script step runs. */
+    practiceScript: jsonb('practice_script'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('walkthroughs_program_idx').on(t.programId),
+    // Latest-walkthrough-for-opponent is the dominant lookup; this index
+    // covers both the (program, opponent) filter and the createdAt sort.
+    index('walkthroughs_lookup_idx').on(t.programId, t.opponentId, t.createdAt),
+  ],
 );
 
 // ─── Seasons ─────────────────────────────────────────────────────
@@ -362,6 +415,10 @@ export const cvTags = pgTable(
 );
 
 // ─── Eval bench (discarded ensemble disagreements for future training) ──
+// STATUS: Forward-looking — not yet written to by any code path. The CV
+// pipeline currently uses a single model (Claude). When a multi-model
+// ensemble is added, disagreements between models will be logged here
+// for human review and fine-tuning. Safe to ignore until then.
 
 export const evalBench = pgTable(
   'eval_bench',
