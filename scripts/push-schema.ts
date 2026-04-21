@@ -1,13 +1,12 @@
 /**
- * Direct schema push — runs all migration SQL files against the DB
- * using the postgres-js driver (same as the app). Use when drizzle-kit push hangs.
- *
- * Usage: bun run scripts/push-schema.ts
+ * Direct schema push via Neon HTTP driver.
+ * Usage: npx tsx scripts/push-schema.ts
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import postgres from 'postgres';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { neon } from '@neondatabase/serverless';
 
 const url = process.env.DATABASE_URL ?? process.env.DATABASE_URL_UNPOOLED;
 if (!url) {
@@ -15,14 +14,14 @@ if (!url) {
   process.exit(1);
 }
 
-const sql = postgres(url, { max: 1, idle_timeout: 10 });
+const sql = neon(url);
 
 async function run() {
-  // Test connection
-  const [{ now }] = await sql`SELECT now()`;
-  console.log(`Connected to DB at ${now}`);
+  const result = await sql`SELECT now() as now`;
+  console.log(`Connected to DB at ${result[0]?.now}`);
 
-  const drizzleDir = join(import.meta.dir, '..', 'drizzle');
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const drizzleDir = join(__dirname, '..', 'drizzle');
   const files = readdirSync(drizzleDir)
     .filter((f) => f.endsWith('.sql') && /^\d{4}/.test(f))
     .sort();
@@ -33,7 +32,6 @@ async function run() {
     const path = join(drizzleDir, file);
     const content = readFileSync(path, 'utf-8');
 
-    // Split on the drizzle statement breakpoint marker
     const statements = content
       .split('--> statement-breakpoint')
       .map((s) => s.trim())
@@ -43,15 +41,11 @@ async function run() {
 
     for (const stmt of statements) {
       try {
-        await sql.unsafe(stmt);
+        await sql.query(stmt);
         console.log(`  OK: ${stmt.slice(0, 70).replace(/\n/g, ' ')}...`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (
-          msg.includes('already exists') ||
-          msg.includes('duplicate') ||
-          msg.includes('DUPLICATE')
-        ) {
+        if (msg.includes('already exists') || msg.includes('duplicate')) {
           console.log(`  SKIP (exists): ${stmt.slice(0, 50).replace(/\n/g, ' ')}...`);
         } else {
           console.error(`  FAIL: ${stmt.slice(0, 80).replace(/\n/g, ' ')}...`);
@@ -61,7 +55,6 @@ async function run() {
     }
   }
 
-  await sql.end();
   console.log('\nDone.');
 }
 
