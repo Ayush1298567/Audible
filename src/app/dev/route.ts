@@ -11,15 +11,15 @@ import { sql } from 'drizzle-orm';
  */
 export async function GET(): Promise<Response> {
   // Check if a program exists
-  const existing = await db.execute(sql`SELECT id, name FROM programs LIMIT 1`);
+  const existing = await db.select({ id: programs.id, name: programs.name }).from(programs).limit(1);
 
   let programId: string;
   let programName: string;
 
   const first = existing[0];
   if (first) {
-    programId = first.id as string;
-    programName = first.name as string;
+    programId = first.id;
+    programName = first.name;
   } else {
     // Create program
     const [program] = await db.insert(programs).values({
