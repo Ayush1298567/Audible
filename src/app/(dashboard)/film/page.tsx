@@ -479,9 +479,17 @@ export default function FilmRoomPage() {
                     playOrder={play.playOrder}
                     down={play.down}
                     distance={play.distance}
+                    quarter={play.coachOverride ? null : null}
                     formation={play.formation}
+                    personnel={null}
                     playType={play.playType}
+                    playDirection={play.playDirection}
                     gainLoss={play.gainLoss}
+                    result={play.result}
+                    coverage={(play.coachOverride as Record<string, string> | null)?.aiCoverage}
+                    pressure={(play.coachOverride as Record<string, string> | null)?.aiPressure}
+                    front={(play.coachOverride as Record<string, string> | null)?.aiDefensiveFront}
+                    route={(play.coachOverride as Record<string, string> | null)?.aiRouteConcept}
                     isSelected={selectedPlay?.id === play.id}
                     status={play.status}
                     onClick={() => setSelectedPlay(play)}

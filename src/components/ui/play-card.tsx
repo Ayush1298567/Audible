@@ -7,9 +7,17 @@ interface PlayCardProps {
   playOrder: number;
   down: number | null;
   distance: number | null;
+  quarter: number | null;
   formation: string | null;
+  personnel: string | null;
   playType: string | null;
+  playDirection: string | null;
   gainLoss: number | null;
+  result: string | null;
+  coverage?: string | null;
+  pressure?: string | null;
+  front?: string | null;
+  route?: string | null;
   isSelected?: boolean;
   status?: string;
   onClick?: () => void;
@@ -19,9 +27,17 @@ export function PlayCard({
   playOrder,
   down,
   distance,
+  quarter,
   formation,
+  personnel,
   playType,
+  playDirection,
   gainLoss,
+  result,
+  coverage,
+  pressure,
+  front,
+  route,
   isSelected = false,
   status,
   onClick,
@@ -33,84 +49,100 @@ export function PlayCard({
     return 'text-red-400';
   };
 
+  const isRun = playType?.toLowerCase().includes('run') || playType === 'rpo';
+  const isBigPlay = (gainLoss ?? 0) > 15 || (gainLoss ?? 0) < -5;
+
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'group relative w-full cursor-pointer rounded-xl border p-4 text-left transition-all duration-300',
+        'group relative w-full cursor-pointer rounded-xl border p-3.5 text-left transition-all duration-200',
         'bg-slate-900/40 backdrop-blur-md',
-        'hover:bg-slate-800/60 hover:shadow-xl hover:shadow-blue-500/10',
-        'hover:scale-[1.02] hover:-translate-y-0.5',
+        'hover:bg-slate-800/60 hover:shadow-lg',
         isSelected
           ? 'border-blue-500 shadow-lg shadow-blue-500/20 ring-1 ring-blue-500/50'
           : 'border-slate-700/50 hover:border-blue-400/40',
+        isBigPlay && !isSelected && 'border-l-2 border-l-yellow-500/60',
       )}
     >
-      {/* Glow overlay on hover */}
-      <div
-        className={cn(
-          'absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300',
-          'bg-gradient-to-br from-blue-500/5 via-transparent to-cyan-500/5',
-          'group-hover:opacity-100',
-        )}
-      />
-
-      <div className="relative z-10 space-y-3">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-display text-lg font-bold text-white">
-              #{playOrder}
+      <div className="space-y-2">
+        {/* Row 1: Play number + type + quarter + result */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-mono text-sm font-bold text-slate-400">
+              {playOrder}
             </span>
+            <span className="font-display text-sm font-bold text-white truncate">
+              {down ? `${down}&${distance ?? '?'}` : '—'}
+            </span>
+            {quarter && (
+              <span className="text-[10px] text-slate-500">Q{quarter}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
             {playType && (
               <Badge
                 className={cn(
-                  'text-[10px] font-semibold uppercase tracking-wider border-0',
-                  playType.toLowerCase().includes('run')
-                    ? 'bg-blue-600/80 text-white'
-                    : 'bg-purple-600/80 text-white',
+                  'text-[9px] font-bold uppercase tracking-wider border-0 px-1.5 py-0',
+                  isRun ? 'bg-blue-600/70 text-white' : 'bg-purple-600/70 text-white',
                 )}
               >
                 {playType}
               </Badge>
             )}
-          </div>
-          {isSelected && (
-            <div className="h-2 w-2 rounded-full bg-blue-500 pulse-dot" />
-          )}
-        </div>
-
-        {/* Down & Distance */}
-        <p className="font-display text-sm font-semibold text-slate-300">
-          {down ? `${down}${ordinal(down)} & ${distance ?? '?'}` : 'No D&D'}
-        </p>
-
-        {/* Formation */}
-        {formation && (
-          <p className="text-xs text-slate-400">
-            <span className="font-medium">Formation:</span>{' '}
-            <span className="text-slate-300">{formation}</span>
-          </p>
-        )}
-
-        {/* Yards */}
-        <div className="flex items-center justify-between border-t border-slate-700/40 pt-3">
-          <span className="font-display text-[10px] uppercase tracking-widest text-slate-500">Result</span>
-          {gainLoss != null ? (
-            <div className="flex items-center gap-1">
-              <span className={cn('font-display text-xl font-bold', getYardsColor(gainLoss))}>
+            {gainLoss != null && (
+              <span className={cn('font-mono text-sm font-bold', getYardsColor(gainLoss))}>
                 {gainLoss > 0 ? '+' : ''}{gainLoss}
               </span>
-              <span className="text-xs text-slate-500">yds</span>
-            </div>
-          ) : (
-            <span className="text-xs text-slate-500">—</span>
-          )}
+            )}
+          </div>
         </div>
+
+        {/* Row 2: Formation + personnel + direction */}
+        <div className="flex items-center gap-2 text-xs">
+          {formation && <span className="text-slate-300 font-medium truncate">{formation}</span>}
+          {personnel && <span className="text-slate-500">{personnel}</span>}
+          {playDirection && <span className="text-slate-500">{playDirection}</span>}
+        </div>
+
+        {/* Row 3: CV tags — the valuable stuff */}
+        {(coverage || pressure || front || route) && (
+          <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-800/50">
+            {coverage && (
+              <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-medium text-cyan-400">
+                {coverage}
+              </span>
+            )}
+            {front && (
+              <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[9px] font-medium text-blue-400">
+                {front}
+              </span>
+            )}
+            {pressure && pressure !== 'None' && (
+              <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-medium text-red-400">
+                {pressure}
+              </span>
+            )}
+            {route && (
+              <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-[9px] font-medium text-purple-400">
+                {route}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Result text for special plays */}
+        {result && result !== 'Complete' && result !== 'Rush' && result !== 'Incomplete' && (
+          <p className={cn(
+            'text-[10px] font-bold uppercase tracking-wider',
+            result === 'TD' ? 'text-green-400' : result === 'INT' || result === 'Fumble' ? 'text-red-400' : 'text-yellow-400',
+          )}>
+            {result}
+          </p>
+        )}
       </div>
 
-      {/* Status badge if not ready */}
       {status && status !== 'ready' && (
         <div className="absolute right-2 top-2">
           <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-400">
@@ -120,10 +152,4 @@ export function PlayCard({
       )}
     </button>
   );
-}
-
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return s[(v - 20) % 10] ?? s[v] ?? s[0] ?? '';
 }
