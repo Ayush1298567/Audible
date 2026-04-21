@@ -5,6 +5,10 @@
  * these guards. Ad-hoc `if (user.role === ...)` checks in route handlers
  * are forbidden. Having one place to read means one place to audit.
  *
+ * DEV MODE: When DEV_BYPASS_AUTH=1, all guards return a fake session
+ * with the role from DEV_ROLE (default: head_coach) and the programId
+ * from DEV_PROGRAM_ID. This lets us test every route without Clerk.
+ *
  * See PLAN.md §5.1 for the role model.
  */
 
@@ -33,6 +37,33 @@ export class AuthError extends Error {
 }
 
 /**
+ * Dev bypass: return a fake session when DEV_BYPASS_AUTH=1.
+ * Reads role from DEV_ROLE env var, programId from DEV_PROGRAM_ID
+ * or falls back to the first program in the DB.
+ */
+async function devBypassSession(): Promise<CoachSession | null> {
+  if (process.env.DEV_BYPASS_AUTH !== '1') return null;
+
+  let programId = process.env.DEV_PROGRAM_ID;
+  if (!programId) {
+    // Auto-discover the first program in the DB
+    const firstProgram = await withGlobalContext(async (tx) => {
+      const rows = await tx.select({ id: programs.id }).from(programs).limit(1);
+      return rows[0];
+    });
+    programId = firstProgram?.id ?? 'dev-program-id';
+  }
+
+  const role = (process.env.DEV_ROLE ?? 'head_coach') as CoachRole;
+  return {
+    clerkUserId: 'dev-user',
+    clerkOrgId: 'dev-org',
+    programId,
+    role,
+  };
+}
+
+/**
  * Require any authenticated coach. Returns the coach session with
  * programId resolved, ready to pass into withProgramContext.
  *
@@ -40,6 +71,10 @@ export class AuthError extends Error {
  * has no coach record in their active organization.
  */
 export async function requireCoach(): Promise<CoachSession> {
+  // Dev bypass
+  const devSession = await devBypassSession();
+  if (devSession) return devSession;
+
   const { userId, orgId } = await auth();
 
   if (!userId) {
@@ -49,8 +84,7 @@ export async function requireCoach(): Promise<CoachSession> {
     throw new AuthError('No active organization — coach must be in a program', 403);
   }
 
-  // Resolve programId from the Clerk org ID. This lookup bypasses RLS
-  // because `programs` is not a tenant-scoped table.
+  // Resolve programId from the Clerk org ID.
   const program = await withGlobalContext(async (tx) => {
     const rows = await tx.select().from(programs).where(eq(programs.clerkOrgId, orgId)).limit(1);
     return rows[0];
@@ -60,7 +94,7 @@ export async function requireCoach(): Promise<CoachSession> {
     throw new AuthError('Clerk org is not linked to an Audible program', 403);
   }
 
-  // Now look up the coach record inside the program's RLS context.
+  // Look up the coach record inside the program's RLS context.
   const coach = await withProgramContext(program.id, async (tx) => {
     const rows = await tx
       .select()
@@ -85,9 +119,6 @@ export async function requireCoach(): Promise<CoachSession> {
 /**
  * Require a specific minimum role. Roles are ordered:
  *   head_coach > coordinator > assistant
- *
- * `requireCoachRole('coordinator')` allows head_coach and coordinator
- * but not assistant.
  */
 export async function requireCoachRole(minRole: CoachRole): Promise<CoachSession> {
   const session = await requireCoach();
@@ -117,11 +148,15 @@ export async function requireHeadCoach(): Promise<CoachSession> {
 
 /**
  * Require that the requested programId matches the authenticated coach's
- * active organization. This prevents callers from passing arbitrary UUIDs
- * and attempting cross-program reads/writes.
+ * active organization.
  */
 export async function requireCoachForProgram(programId: string): Promise<CoachSession> {
   const session = await requireCoach();
+
+  // In dev mode, always allow (programId comes from the client)
+  if (process.env.DEV_BYPASS_AUTH === '1') {
+    return { ...session, programId };
+  }
 
   if (session.programId !== programId) {
     throw new AuthError('Forbidden: program mismatch', 403);
@@ -138,6 +173,10 @@ export async function requireCoachRoleForProgram(
   programId: string,
 ): Promise<CoachSession> {
   const session = await requireCoachRole(minRole);
+
+  if (process.env.DEV_BYPASS_AUTH === '1') {
+    return { ...session, programId };
+  }
 
   if (session.programId !== programId) {
     throw new AuthError('Forbidden: program mismatch', 403);

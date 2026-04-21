@@ -4,9 +4,8 @@
  * Public routes: /, /sign-in, /sign-up, /join, /api/health, /api/player-auth
  * Everything else requires authentication via Clerk.
  *
- * In Next.js 16, middleware.ts was renamed to proxy.ts:
- *   - Export: proxy() instead of middleware()
- *   - Config: proxyConfig instead of config
+ * DEV MODE: When DEV_BYPASS_AUTH=1 is set, all routes are public.
+ * This lets us test the full app without Clerk Organizations enabled.
  */
 
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
@@ -29,6 +28,11 @@ export const proxy = clerkMiddleware(async (auth, request) => {
   headers.set('X-Frame-Options', 'DENY');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  // Dev bypass — skip auth entirely when flag is set
+  if (process.env.DEV_BYPASS_AUTH === '1') {
+    return;
+  }
 
   if (!isPublicRoute(request)) {
     await auth.protect();

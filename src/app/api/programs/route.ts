@@ -12,20 +12,31 @@ export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/programs', method: 'GET' }, req);
 
   try {
-    const { userId, orgId } = await auth();
-    if (!userId) {
-      return Response.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-    if (!orgId) {
-      return Response.json(
-        { error: 'No active organization', programs: [] },
-        { status: 200 },
-      );
-    }
+    let program;
 
-    const [program] = await withGlobalContext(async (tx) =>
-      tx.select().from(programs).where(eq(programs.clerkOrgId, orgId)).limit(1),
-    );
+    if (process.env.DEV_BYPASS_AUTH === '1') {
+      // Dev mode: return the first program in the DB
+      const [first] = await withGlobalContext(async (tx) =>
+        tx.select().from(programs).limit(1),
+      );
+      program = first;
+    } else {
+      const { userId, orgId } = await auth();
+      if (!userId) {
+        return Response.json({ error: 'Not authenticated' }, { status: 401 });
+      }
+      if (!orgId) {
+        return Response.json(
+          { error: 'No active organization', programs: [] },
+          { status: 200 },
+        );
+      }
+
+      const [found] = await withGlobalContext(async (tx) =>
+        tx.select().from(programs).where(eq(programs.clerkOrgId, orgId)).limit(1),
+      );
+      program = found;
+    }
 
     if (!program) {
       span.done({ count: 0 });

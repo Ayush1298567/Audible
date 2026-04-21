@@ -1,19 +1,21 @@
 'use client';
 
 /**
- * Program context — resolves the current Clerk organization into an
- * Audible program ID.
+ * Program context — resolves the authenticated user into an Audible
+ * program ID.
  *
- * Source of truth is the Clerk org session. On mount (and whenever the
- * active org changes), we fetch `/api/programs` — which is Clerk-gated
- * and returns the programs belonging to the authenticated user's org.
- * localStorage is used only as a hydration cache to avoid layout flicker.
+ * In production (Clerk Organizations enabled): uses useOrganization()
+ * to get the org → fetches /api/programs to resolve programId.
  *
- * Consumer API (unchanged from the original placeholder):
- *   const { programId, programName, isLoading } = useProgram();
+ * In dev mode (NODE_ENV=development or Clerk orgs not enabled): fetches
+ * /api/programs directly — the API already gates on Clerk auth and
+ * returns the user's program. Falls back to localStorage for the dev
+ * toolbar's manual overrides.
+ *
+ * Consumer API:
+ *   const { programId, programName, programLevel, isLoading, refresh } = useProgram();
  */
 
-import { useOrganization } from '@clerk/nextjs';
 import {
   createContext,
   useCallback,
@@ -30,6 +32,8 @@ interface ProgramContextValue {
   isLoading: boolean;
   /** Force-refresh the program from the server (e.g. after setup). */
   refresh: () => void;
+  /** Dev-only: manually set programId (from dev toolbar). */
+  setProgramId?: (id: string, name: string, level?: string) => void;
 }
 
 const ProgramContext = createContext<ProgramContextValue>({
@@ -42,13 +46,12 @@ const ProgramContext = createContext<ProgramContextValue>({
 
 const STORAGE_KEY_ID = 'audible_program_id';
 const STORAGE_KEY_NAME = 'audible_program_name';
+const STORAGE_KEY_LEVEL = 'audible_program_level';
 
 export function ProgramProvider({ children }: { children: ReactNode }) {
-  const { organization, isLoaded: isOrgLoaded } = useOrganization();
-
-  const [programId, setProgramId] = useState<string | null>(null);
-  const [programName, setProgramName] = useState<string | null>(null);
-  const [programLevel, setProgramLevel] = useState<string | null>(null);
+  const [programId, _setProgramId] = useState<string | null>(null);
+  const [programName, _setProgramName] = useState<string | null>(null);
+  const [programLevel, _setProgramLevel] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchKey, setFetchKey] = useState(0);
 
@@ -56,36 +59,27 @@ export function ProgramProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const cached = localStorage.getItem(STORAGE_KEY_ID);
     const cachedName = localStorage.getItem(STORAGE_KEY_NAME);
+    const cachedLevel = localStorage.getItem(STORAGE_KEY_LEVEL);
     if (cached) {
-      setProgramId(cached);
-      setProgramName(cachedName);
+      _setProgramId(cached);
+      _setProgramName(cachedName);
+      _setProgramLevel(cachedLevel);
     }
   }, []);
 
-  // When the Clerk org is loaded (or changes), resolve programId from
-  // the server. The API is auth-gated — it only returns programs for
-  // the authenticated user's org.
+  // Fetch the program from the server. The API is Clerk-gated and
+  // returns programs for the authenticated user. Works with or without
+  // Clerk Organizations enabled.
   useEffect(() => {
-    if (!isOrgLoaded) return;
-
-    // No org → user isn't in a team yet; clear state.
-    if (!organization) {
-      setProgramId(null);
-      setProgramName(null);
-      setProgramLevel(null);
-      localStorage.removeItem(STORAGE_KEY_ID);
-      localStorage.removeItem(STORAGE_KEY_NAME);
-      setIsLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
     async function resolve() {
       try {
         const res = await fetch('/api/programs');
         if (!res.ok) {
-          throw new Error(`/api/programs returned ${res.status}`);
+          // Auth might not be set up yet — keep cached value
+          setIsLoading(false);
+          return;
         }
         const data = await res.json();
         const best = (data.programs ?? [])[0] as
@@ -95,20 +89,15 @@ export function ProgramProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
 
         if (best) {
-          setProgramId(best.id);
-          setProgramName(best.name);
-          setProgramLevel(best.level ?? null);
+          _setProgramId(best.id);
+          _setProgramName(best.name);
+          _setProgramLevel(best.level ?? null);
           localStorage.setItem(STORAGE_KEY_ID, best.id);
           localStorage.setItem(STORAGE_KEY_NAME, best.name);
-        } else {
-          setProgramId(null);
-          setProgramName(null);
-          setProgramLevel(null);
-          localStorage.removeItem(STORAGE_KEY_ID);
-          localStorage.removeItem(STORAGE_KEY_NAME);
+          if (best.level) localStorage.setItem(STORAGE_KEY_LEVEL, best.level);
         }
       } catch {
-        // Network error — keep any cached value so offline-ish dev works.
+        // Network error — keep any cached value.
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -118,13 +107,23 @@ export function ProgramProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isOrgLoaded, organization?.id, fetchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchKey]);
 
   const refresh = useCallback(() => setFetchKey((k) => k + 1), []);
 
+  // Dev-only: manual override from the dev toolbar
+  const setProgramId = useCallback((id: string, name: string, level?: string) => {
+    _setProgramId(id);
+    _setProgramName(name);
+    _setProgramLevel(level ?? null);
+    localStorage.setItem(STORAGE_KEY_ID, id);
+    localStorage.setItem(STORAGE_KEY_NAME, name);
+    if (level) localStorage.setItem(STORAGE_KEY_LEVEL, level);
+  }, []);
+
   return (
     <ProgramContext.Provider
-      value={{ programId, programName, programLevel, isLoading, refresh }}
+      value={{ programId, programName, programLevel, isLoading, refresh, setProgramId }}
     >
       {children}
     </ProgramContext.Provider>

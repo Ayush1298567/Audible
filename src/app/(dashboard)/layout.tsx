@@ -2,37 +2,34 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, Suspense } from 'react';
-import { useUser } from '@clerk/nextjs';
 import { ProgramProvider, useProgram } from '@/lib/auth/program-context';
 import { Sidebar } from '@/components/layout/sidebar';
 import { CommandBar } from '@/components/layout/command-bar';
 import { ErrorBoundary } from '@/components/shared/error-boundary';
+import { DevToolbar } from '@/components/dev/dev-toolbar';
 
 /**
- * Dashboard guard — requires Clerk authentication AND a linked program.
+ * Dashboard guard — requires a linked program.
  *
- * Flow:
- *   1. Clerk middleware handles auth — unauthenticated users never
- *      reach this layout.
- *   2. ProgramProvider resolves the Clerk org → programId via
- *      /api/programs (server-validated).
- *   3. If no program → redirect to /setup.
+ * In dev mode (DEV_BYPASS_AUTH=1), Clerk checks are skipped.
+ * The DevToolbar appears at the bottom for switching roles.
  */
+
+const IS_DEV = process.env.NODE_ENV === 'development';
 
 function DashboardGuard({ children }: { children: React.ReactNode }) {
   const { programId, isLoading } = useProgram();
-  const { isLoaded: isUserLoaded } = useUser();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    if (isLoading || !isUserLoaded) return;
+    if (isLoading) return;
     if (!programId) {
       router.replace('/setup');
     }
-  }, [isLoading, isUserLoaded, programId, router]);
+  }, [isLoading, programId, router]);
 
-  if (isLoading || !isUserLoaded) {
+  if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="space-y-3 text-center">
@@ -73,6 +70,7 @@ function DashboardGuard({ children }: { children: React.ReactNode }) {
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
+      {IS_DEV && <DevToolbar />}
     </div>
   );
 }
