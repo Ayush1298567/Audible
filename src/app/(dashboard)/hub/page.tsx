@@ -14,13 +14,26 @@ import type { TendencyBreakdown } from '@/lib/tendencies/queries';
  * Self-scout runs continuously — alerts surface here automatically.
  */
 
+interface OpponentPreview {
+  id: string;
+  name: string;
+  playCount: number;
+  topFormation?: string;
+  topFormationPct?: number;
+  topCoverage?: string;
+  topCoveragePct?: number;
+  gameDate?: string;
+}
+
 interface HubData {
   filmCount: number;
   playCount: number;
   rosterSize: number;
   gamePlanCount: number;
   sessionCount: number;
+  playbookSize: number;
   selfScoutAlerts: TendencyBreakdown[];
+  nextOpponent: OpponentPreview | null;
 }
 
 export default function HubPage() {
@@ -31,12 +44,14 @@ export default function HubPage() {
   const load = useCallback(async () => {
     if (!programId) return;
     try {
-      const [playsRes, playersRes, plansRes, sessionsRes, selfScoutRes] = await Promise.all([
+      const [playsRes, playersRes, plansRes, sessionsRes, selfScoutRes, oppsRes, playbookRes] = await Promise.all([
         fetch(`/api/plays?programId=${programId}`),
         fetch(`/api/players?programId=${programId}`),
         fetch(`/api/gameplan?programId=${programId}`),
         fetch(`/api/sessions?programId=${programId}`),
         fetch(`/api/tendencies?programId=${programId}&type=selfScout`),
+        fetch(`/api/opponents?programId=${programId}`),
+        fetch(`/api/playbook?programId=${programId}`),
       ]);
 
       const playsData = await playsRes.json();
@@ -44,17 +59,58 @@ export default function HubPage() {
       const plansData = await plansRes.json();
       const sessionsData = await sessionsRes.json();
       const selfScoutData = await selfScoutRes.json();
+      const oppsData = await oppsRes.json();
+      const playbookData = await playbookRes.json();
 
-      const plays = playsData.plays ?? [];
-      const gameIds = new Set(plays.map((p: { gameId?: string }) => p.gameId).filter(Boolean));
+      const allPlays = playsData.plays ?? [];
+      const gameIds = new Set(allPlays.map((p: { gameId?: string }) => p.gameId).filter(Boolean));
+      const opps = oppsData.opponents ?? [];
+
+      // Find the opponent with the most recent game
+      let nextOpponent: OpponentPreview | null = null;
+      if (opps.length > 0) {
+        const gamesRes = await fetch(`/api/games?programId=${programId}`);
+        const gamesData = await gamesRes.json();
+        const gamesList = (gamesData.games ?? []) as Array<{ opponentId: string; opponentName: string; playedAt: string | null }>;
+        const sorted = [...gamesList].sort((a, b) => {
+          if (!a.playedAt) return 1;
+          if (!b.playedAt) return -1;
+          return new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime();
+        });
+        const latest = sorted[0];
+        if (latest?.opponentId) {
+          const oppId = latest.opponentId;
+          // Get opponent-specific tendencies
+          try {
+            const tendRes = await fetch(`/api/tendencies?programId=${programId}&opponentId=${oppId}&type=overview`);
+            const tendData = await tendRes.json();
+            const formTop = tendData.formation?.tendencies?.[0];
+            const covRes = await fetch(`/api/tendencies?programId=${programId}&opponentId=${oppId}&type=coverage`);
+            const covData = covRes.ok ? await covRes.json() : null;
+            const covTop = covData?.tendencies?.[0];
+            nextOpponent = {
+              id: oppId,
+              name: latest.opponentName ?? 'Unknown',
+              playCount: tendData.formation?.sampleSize ?? 0,
+              topFormation: formTop?.label,
+              topFormationPct: formTop ? Math.round(formTop.rate * 100) : undefined,
+              topCoverage: covTop?.label,
+              topCoveragePct: covTop ? Math.round(covTop.rate * 100) : undefined,
+              gameDate: latest.playedAt ?? undefined,
+            };
+          } catch { /* skip opponent preview on error */ }
+        }
+      }
 
       setData({
         filmCount: gameIds.size,
-        playCount: plays.length,
+        playCount: allPlays.length,
         rosterSize: (playersData.players ?? []).length,
         gamePlanCount: (plansData.gamePlans ?? []).length,
         sessionCount: (sessionsData.sessions ?? []).length,
+        playbookSize: (playbookData.plays ?? []).length,
         selfScoutAlerts: selfScoutData.alerts ?? [],
+        nextOpponent,
       });
     } catch {
       // fail silently, show zeros
@@ -65,7 +121,7 @@ export default function HubPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const d = data ?? { filmCount: 0, playCount: 0, rosterSize: 0, gamePlanCount: 0, sessionCount: 0, selfScoutAlerts: [] };
+  const d = data ?? { filmCount: 0, playCount: 0, rosterSize: 0, gamePlanCount: 0, sessionCount: 0, playbookSize: 0, selfScoutAlerts: [], nextOpponent: null };
 
   return (
     <div className="relative space-y-8">
@@ -87,10 +143,58 @@ export default function HubPage() {
       {/* Status cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Film" value={String(d.filmCount)} unit="games" description={`${d.playCount} plays analyzed`} accentColor="primary" />
-        <StatCard label="Game Plans" value={String(d.gamePlanCount)} unit="plans" description={d.gamePlanCount > 0 ? 'Ready for game week' : 'Build after uploading film'} accentColor="accent" />
-        <StatCard label="Practice" value={String(d.sessionCount)} unit="sessions" description={d.sessionCount > 0 ? 'Sessions built' : 'No sessions yet'} accentColor="warning" />
+        <StatCard label="Playbook" value={String(d.playbookSize)} unit="plays" description={d.playbookSize > 0 ? 'In your playbook' : 'Add plays for AI suggestions'} accentColor="accent" />
+        <StatCard label="Game Plans" value={String(d.gamePlanCount)} unit="plans" description={d.gamePlanCount > 0 ? 'Ready for game week' : 'Build on the Board'} accentColor="warning" />
         <StatCard label="Roster" value={String(d.rosterSize)} unit="players" description={d.rosterSize > 0 ? 'On your roster' : 'Add players to get started'} accentColor="info" />
       </div>
+
+      {/* This week's opponent */}
+      {d.nextOpponent && (
+        <Link
+          href={`/scouting/${d.nextOpponent.id}`}
+          className="block rounded-xl border border-cyan-500/20 bg-gradient-to-r from-cyan-500/10 via-blue-500/5 to-transparent p-5 hover:border-cyan-500/40 transition-colors animate-fade-in"
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="font-display text-[10px] uppercase tracking-widest text-cyan-400 mb-1">
+                This Week&apos;s Opponent
+              </p>
+              <h3 className="font-display text-xl font-bold text-white">
+                {d.nextOpponent.name}
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                {d.nextOpponent.playCount} plays of film analyzed
+                {d.nextOpponent.gameDate && ` · Game ${new Date(d.nextOpponent.gameDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+              </p>
+            </div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400 shrink-0 mt-1" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </div>
+          {(d.nextOpponent.topFormation || d.nextOpponent.topCoverage) && (
+            <div className="flex gap-4 mt-3 pt-3 border-t border-cyan-500/10">
+              {d.nextOpponent.topFormation && (
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest">Top Formation</p>
+                  <p className="text-sm font-semibold text-white">
+                    {d.nextOpponent.topFormation}{' '}
+                    <span className="text-cyan-400">{d.nextOpponent.topFormationPct}%</span>
+                  </p>
+                </div>
+              )}
+              {d.nextOpponent.topCoverage && (
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest">Top Coverage</p>
+                  <p className="text-sm font-semibold text-white">
+                    {d.nextOpponent.topCoverage}{' '}
+                    <span className="text-cyan-400">{d.nextOpponent.topCoveragePct}%</span>
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </Link>
+      )}
 
       {/* Self-scout alerts */}
       <div className="space-y-4">

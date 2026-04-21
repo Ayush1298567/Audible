@@ -1,5 +1,5 @@
 import { db } from '@/lib/db/client';
-import { programs, seasons, players, opponents, games, plays } from '@/lib/db/schema';
+import { programs, seasons, players, opponents, games, plays, coaches, playbookPlays, gamePlans } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -273,6 +273,54 @@ export async function GET(req: Request): Promise<Response> {
     // Insert all plays
     for (const pv of playValues) {
       await db.insert(plays).values(pv as typeof plays.$inferInsert);
+    }
+
+    // Seed coach (dev user as head coach)
+    const existingCoaches = await db.select({ id: coaches.id }).from(coaches).where(eq(coaches.programId, programId));
+    if (existingCoaches.length === 0) {
+      await db.insert(coaches).values({
+        programId,
+        clerkUserId: 'dev-user',
+        email: 'coach@lincoln-high.dev',
+        firstName: 'Coach',
+        lastName: 'Williams',
+        role: 'head_coach',
+      });
+    }
+
+    // Seed playbook (the coach's actual plays)
+    const existingPlaybook = await db.select({ id: playbookPlays.id }).from(playbookPlays).where(eq(playbookPlays.programId, programId));
+    if (existingPlaybook.length === 0) {
+      const pbPlays = [
+        { name: 'Inside Zone', formation: 'Singleback', playType: 'run', personnel: '11', situationTags: ['1st down', 'red zone'] },
+        { name: 'Power Right', formation: 'I-Form', playType: 'run', personnel: '12', situationTags: ['1st down', 'goal line'] },
+        { name: 'Counter Left', formation: 'Pistol', playType: 'run', personnel: '12', situationTags: ['2nd & short'] },
+        { name: 'Mesh vs Trips', formation: 'Shotgun Trips', playType: 'pass', personnel: '11', situationTags: ['3rd & medium', '3rd & long'] },
+        { name: 'Curl-Flat', formation: 'Shotgun', playType: 'pass', personnel: '11', situationTags: ['3rd & short', '3rd & medium'] },
+        { name: 'Post-Wheel', formation: 'Spread', playType: 'pass', personnel: '11', situationTags: ['3rd & long', 'two minute'] },
+        { name: 'Slant-Flat', formation: 'Shotgun', playType: 'pass', personnel: '11', situationTags: ['3rd & short'] },
+        { name: 'Y-Cross', formation: 'Shotgun Twins', playType: 'pass', personnel: '12', situationTags: ['2nd & long', '3rd & long'] },
+        { name: 'Screen Left', formation: 'Shotgun', playType: 'screen', personnel: '11', situationTags: ['3rd & long'] },
+        { name: 'Jet Sweep', formation: 'Shotgun', playType: 'run', personnel: '11', situationTags: ['1st down'] },
+        { name: 'PA Boot', formation: 'Singleback', playType: 'pass', personnel: '12', situationTags: ['1st down', 'red zone'] },
+        { name: 'Four Verts', formation: 'Spread', playType: 'pass', personnel: '11', situationTags: ['two minute', '3rd & long'] },
+        { name: 'RPO Bubble', formation: 'Shotgun Trips', playType: 'rpo', personnel: '11', situationTags: ['1st down', '2nd & short'] },
+        { name: 'Dive', formation: 'I-Form', playType: 'run', personnel: '21', situationTags: ['goal line', 'backed up'] },
+        { name: 'HB Toss', formation: 'Pistol', playType: 'run', personnel: '11', situationTags: ['1st down'] },
+      ];
+      for (const p of pbPlays) {
+        await db.insert(playbookPlays).values({ programId, ...p });
+      }
+    }
+
+    // Seed a game plan for this week's opponent (Jefferson)
+    const existingPlans = await db.select({ id: gamePlans.id }).from(gamePlans).where(eq(gamePlans.programId, programId));
+    if (existingPlans.length === 0) {
+      await db.insert(gamePlans).values({
+        programId,
+        opponentId: jeffersonId,
+        weekLabel: 'Week 4 vs Jefferson',
+      });
     }
   }
 
