@@ -168,7 +168,7 @@ export function DevToolbar() {
                   type="button"
                   onClick={() => router.push(p.path)}
                   className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
-                    pathname === p.path || pathname.startsWith(p.path + '/')
+                    pathname === p.path || pathname.startsWith(`${p.path}/`)
                       ? 'bg-white/10 text-white'
                       : 'text-slate-500 hover:text-white'
                   }`}

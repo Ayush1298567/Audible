@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useOrganization } from '@clerk/nextjs';
+import { AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +18,91 @@ interface ProgramInfo {
   createdAt: string;
 }
 
+interface DependencyCheck {
+  name: string;
+  required: boolean;
+  configured: boolean;
+  missing: string[];
+}
+
+interface DependencyResponse {
+  status: 'ok' | 'degraded' | 'error';
+  runtime: 'production' | 'development';
+  checks: DependencyCheck[];
+  missingRequired: string[];
+}
+
+const DEPENDENCY_LABELS: Record<string, { label: string; description: string }> = {
+  database: {
+    label: 'Database',
+    description: 'Postgres schema, RLS, and tenant data access',
+  },
+  clerk: {
+    label: 'Clerk',
+    description: 'Coach authentication and organization context',
+  },
+  player_sessions: {
+    label: 'Player Sessions',
+    description: 'Signed player tokens and revocation safety',
+  },
+  rate_limit: {
+    label: 'Redis Rate Limits',
+    description: 'Distributed join-code and abuse throttling',
+  },
+  blob: {
+    label: 'Blob Storage',
+    description: 'Film, clips, and generated PDF storage',
+  },
+  llm: {
+    label: 'Coach AI',
+    description: 'Command bar, scouting, and report generation',
+  },
+  video_boundary_ai: {
+    label: 'Video AI',
+    description: 'Boundary detection and game analysis',
+  },
+  vision_secondary_model: {
+    label: 'Vision Ensemble',
+    description: 'Secondary model for CV agreement gates',
+  },
+  player_detection: {
+    label: 'Player Detection',
+    description: 'Optional detection model integration',
+  },
+};
+
+const DEPENDENCY_ORDER = [
+  'database',
+  'clerk',
+  'rate_limit',
+  'blob',
+  'llm',
+  'player_sessions',
+  'video_boundary_ai',
+  'vision_secondary_model',
+  'player_detection',
+];
+
+function dependencyLabel(name: string): string {
+  return DEPENDENCY_LABELS[name]?.label ?? name.replaceAll('_', ' ');
+}
+
+function dependencyDescription(name: string): string {
+  return DEPENDENCY_LABELS[name]?.description ?? 'Runtime dependency readiness';
+}
+
+function dependencyDetail(check: DependencyCheck): string {
+  if (check.configured) {
+    return check.required ? 'Required and configured' : 'Configured';
+  }
+
+  if (check.required) {
+    return `Missing ${check.missing.join(', ')}`;
+  }
+
+  return 'Optional dependency not configured';
+}
+
 export default function SettingsPage() {
   const { programId, refresh } = useProgram();
   const { organization } = useOrganization();
@@ -24,6 +110,9 @@ export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [dependencies, setDependencies] = useState<DependencyResponse | null>(null);
+  const [isDependenciesLoading, setIsDependenciesLoading] = useState(true);
+  const [dependencyError, setDependencyError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!programId) return;
@@ -39,7 +128,25 @@ export default function SettingsPage() {
     }
   }, [programId]);
 
+  const loadDependencies = useCallback(async () => {
+    setIsDependenciesLoading(true);
+    setDependencyError(null);
+    try {
+      const res = await fetch('/api/health/dependencies');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? 'Dependency check failed');
+      }
+      setDependencies(data);
+    } catch {
+      setDependencyError('Readiness check failed');
+    } finally {
+      setIsDependenciesLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void loadDependencies(); }, [loadDependencies]);
 
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -85,7 +192,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-4xl space-y-6">
       <div>
         <p className="font-display text-xs uppercase tracking-widest text-blue-400 mb-1">Configuration</p>
         <h1 className="font-display text-3xl font-bold tracking-tight text-white">Program Settings</h1>
@@ -138,6 +245,111 @@ export default function SettingsPage() {
               )}
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="font-display text-sm uppercase tracking-widest">
+                Readiness
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {dependencies
+                  ? `${dependencies.runtime} checks are ${dependencies.status}`
+                  : 'Checking runtime dependencies'}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => { void loadDependencies(); }}
+              disabled={isDependenciesLoading}
+              className="w-fit gap-2 font-display text-xs uppercase tracking-widest"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isDependenciesLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {dependencyError ? (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+              {dependencyError}
+            </div>
+          ) : isDependenciesLoading && !dependencies ? (
+            <div className="flex items-center gap-3 py-6">
+              <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
+              <p className="font-display text-xs uppercase tracking-widest text-slate-500">
+                Checking dependencies...
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {[...(dependencies?.checks ?? [])]
+                .sort((a, b) => {
+                  const aIndex = DEPENDENCY_ORDER.indexOf(a.name);
+                  const bIndex = DEPENDENCY_ORDER.indexOf(b.name);
+                  return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+                })
+                .map((check) => (
+                  <div
+                    key={check.name}
+                    className={`rounded-lg border px-3 py-3 ${
+                      check.configured
+                        ? 'border-emerald-500/20 bg-emerald-500/5'
+                        : check.required
+                          ? 'border-red-500/20 bg-red-500/5'
+                          : 'border-slate-700/60 bg-white/[0.02]'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                          check.configured
+                            ? 'bg-emerald-500/10 text-emerald-300'
+                            : check.required
+                              ? 'bg-red-500/10 text-red-300'
+                              : 'bg-slate-700/50 text-slate-400'
+                        }`}
+                      >
+                        {check.configured ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-display text-sm font-semibold text-white">
+                            {dependencyLabel(check.name)}
+                          </p>
+                          <span className="rounded border border-white/10 px-1.5 py-0.5 font-display text-[10px] uppercase tracking-widest text-slate-400">
+                            {check.required ? 'Required' : 'Optional'}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {dependencyDescription(check.name)}
+                        </p>
+                        <p
+                          className={`mt-2 text-xs ${
+                            check.configured
+                              ? 'text-emerald-300'
+                              : check.required
+                                ? 'text-red-300'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {dependencyDetail(check)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

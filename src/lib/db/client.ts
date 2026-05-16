@@ -1,8 +1,8 @@
 /**
  * Database client with program-scoped context.
  *
- * Uses @neondatabase/serverless with WebSocket transport for Neon
- * (solves Node 25 ECONNRESET issues), or postgres-js for local PG.
+ * Uses postgres-js so program-scoped queries can run inside a real
+ * transaction with SET LOCAL context for Postgres RLS.
  *
  * The ONLY way to run a query against tenant-scoped tables is through
  * `withProgramContext(programId, async (tx) => ...)`.
@@ -10,28 +10,27 @@
  * See PLAN.md §5.2 and drizzle/0001_enable_rls.sql.
  */
 
-import { drizzle } from 'drizzle-orm/neon-http';
-import { neon } from '@neondatabase/serverless';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema';
 
 if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is not set. Pull it with `vercel env pull .env.local`.');
+  throw new Error('DATABASE_URL is not set. Add it to .env.local; see README.md and VERCEL_TODO.md.');
 }
 
-const queryFn = neon(process.env.DATABASE_URL);
-export const db = drizzle(queryFn, { schema });
+const client = postgres(process.env.DATABASE_URL, {
+  max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+  prepare: false,
+});
+
+export const db = drizzle(client, { schema });
 
 /**
  * Run queries inside a program-scoped context.
  *
- * The Neon HTTP driver does not support multi-statement transactions.
- * In production on Vercel, Fluid Compute keeps the function warm so
- * connection overhead is minimal. For RLS enforcement, we rely on
- * the auth guards (which are server-side) rather than SET LOCAL.
- *
- * TODO: Switch to Neon's WebSocket driver or postgres-js with a
- * pooler when RLS enforcement is critical in production.
+ * The set_config(..., true) call is transaction-local. It feeds the
+ * app.current_program_id() helper used by every tenant-scoped RLS policy.
  */
 export async function withProgramContext<T>(
   programId: string,
@@ -40,8 +39,26 @@ export async function withProgramContext<T>(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(programId)) {
     throw new Error(`withProgramContext: invalid program UUID: ${programId}`);
   }
-  // Run directly — auth guards handle program isolation.
-  return fn(db);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.program_id', ${programId}, true)`);
+    return fn(tx as unknown as typeof db);
+  });
+}
+
+/**
+ * Narrow global lookup used by player join-code authentication.
+ *
+ * The corresponding RLS policy only exposes the player row whose join_code
+ * equals app.join_code and has not expired.
+ */
+export async function withPlayerJoinCodeContext<T>(
+  joinCode: string,
+  fn: (tx: typeof db) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.join_code', ${joinCode}, true)`);
+    return fn(tx as unknown as typeof db);
+  });
 }
 
 /**

@@ -8,22 +8,22 @@ See `../PLAN.md` and `../TEST-PLAN.md` in the parent directory for the full buil
 
 ## Status
 
-**Phase 0 — Scaffolding.** No user-facing features yet. This directory contains:
+**Active prototype.** The app now has coach/dashboard routes, Clerk-backed program
+context, dev auth bypass, roster/staff management, film ingest/import paths,
+scouting walkthroughs, practice scripts, PDFs, the Board/game-plan flow, player
+join-code auth, player film/game-plan/progress APIs, CV/tendency helpers, and
+realistic demo seed data.
 
-- Next.js 16 app shell with App Router
-- Drizzle schema for the tag database with RLS policies
-- Auth guards skeleton for Clerk multi-tenancy
-- Hudl ingestion reconciliation algorithm + Zod schemas
-- Central AI schema library for vision ensemble tasks (coverage, pressure)
-- Observability primitives (`beginSpan` / `log`)
-- Test harness configs (Vitest + Playwright)
-- CI workflow
-
-Next: Phase 1 (auth + program setup), then Phase 2 (Hudl ingestion), then the tendency engine.
+Current hardening work is tracked in `PROJECT_DEEP_TODO.md`. Manual deploy/env
+steps live in `ACTION_ITEMS.md` and `VERCEL_TODO.md`.
 
 ---
 
 ## Local development
+
+Vercel CLI/deploy work is deferred while the user is not logged in. Do not run
+`vercel`, `bunx vercel`, or `npx vercel` from this Codex session; later manual
+steps live in `VERCEL_TODO.md`.
 
 ### Prerequisites
 
@@ -38,18 +38,34 @@ Next: Phase 1 (auth + program setup), then Phase 2 (Hudl ingestion), then the te
 # Install dependencies
 bun install
 
-# Link to your Vercel project (one-time)
-bunx vercel link
+# Create local env from the template or later pull it manually via Vercel.
+cp .env.example .env.local
+# Fill DATABASE_URL, Clerk keys, player-token secret, and any AI/Blob vars you need.
 
-# Pull environment variables from Vercel
-bunx vercel env pull .env.local
+# Validate required env names without printing secret values.
+bun run env:check
 
-# Generate the Drizzle migration for the initial schema
-bun run db:generate
-
-# Apply migrations + RLS policies to your Neon branch
+# Apply journaled migrations + RLS policies to your safe local/dev database.
 bun run db:migrate
 ```
+
+### Environment notes
+
+`DATABASE_URL` is the supported database URL for the app runtime, Drizzle
+migrations, and `drizzle-kit`. Use `DATABASE_POOL_MAX` to tune the runtime pool
+size; the default is `10`. `DATABASE_URL_UNPOOLED` is only read by the
+legacy/emergency `scripts/push-schema.ts` path and is not the normal migration
+path.
+
+For local UI work without Clerk, set these in `.env.local` only:
+
+```bash
+DEV_BYPASS_AUTH=1
+DEV_PROGRAM_ID=<safe-dev-program-uuid>
+DEV_ROLE=head_coach
+```
+
+Never set the dev bypass variables in preview or production.
 
 ### Run the dev server
 
@@ -58,11 +74,17 @@ bun run dev
 # Open http://localhost:3000
 ```
 
-### Run the full CI locally
+### Local verification
 
 ```bash
+bun run verify
+# Runs: migrate:check -> typecheck -> lint -> test -> test:evals -> build
+# This is the DB-free local full pass.
+
 bun run ci
-# Runs: typecheck → lint → test → test:evals
+# Runs: migrate:check -> typecheck -> lint -> test -> test:db -> test:evals
+# test:db skips with no DATABASE_URL, but fails if DATABASE_URL is present
+# without RUN_DB_TESTS=1.
 ```
 
 ---
@@ -102,7 +124,7 @@ audible/
 │           └── log.ts              `beginSpan` / `log` / `emitMetric` helpers
 │
 ├── drizzle/
-│   └── 0001_enable_rls.sql         Row-Level Security policies
+│   └── 0007_rls_runtime_context.sql  Row-Level Security runtime hardening
 │
 ├── tests/
 │   ├── unit/                       Fast, isolated unit tests
@@ -146,7 +168,7 @@ const rows = await withProgramContext(programId, async (tx) =>
 );
 ```
 
-Postgres Row-Level Security enforces this even if you forget. The wrapper sets `app.program_id` per transaction; RLS policies filter on that. See `drizzle/0001_enable_rls.sql` and PLAN.md §5.2.
+Postgres Row-Level Security enforces this even if you forget. The wrapper sets `app.program_id` per transaction; RLS policies filter on that. See `drizzle/0007_rls_runtime_context.sql` and PLAN.md §5.2.
 
 ### 2. Every LLM call goes through a Zod schema in `src/lib/ai/schemas/`.
 
@@ -189,7 +211,8 @@ If you see these warnings in CI or code review tooling, they can be safely dismi
 - **Never paste a live API key into any chat, issue, or PR description.** Rotate immediately if you do.
 - Set a **spend cap** on the Anthropic console (`Settings → Limits`) before connecting a real key. Recommended: `$10/month` during development, raise later.
 - `.env.local` is gitignored. Do not override that. Ever.
-- If you need to share environment variables, use `vercel env` or the Vercel dashboard, not chat or email.
+- If you need to share environment variables, use the Vercel dashboard or the
+  later manual steps in `VERCEL_TODO.md`, not chat or email.
 
 ---
 

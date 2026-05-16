@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
+const DEV_PLAYER_SESSION_SECRET = 'dev-player-session-secret-change-me';
 
 type PlayerTokenPayload = {
   playerId: string;
@@ -14,11 +15,12 @@ type PlayerTokenPayload = {
 };
 
 function getSigningSecret(): string {
-  return (
-    process.env.PLAYER_SESSION_SECRET_CURRENT ??
-    process.env.PLAYER_SESSION_SECRET ??
-    'dev-player-session-secret-change-me'
-  );
+  const current = process.env.PLAYER_SESSION_SECRET_CURRENT;
+  if (current) return current;
+  if (isProductionRuntime()) {
+    throw new Error('PLAYER_SESSION_SECRET_CURRENT is required in production');
+  }
+  return process.env.PLAYER_SESSION_SECRET ?? DEV_PLAYER_SESSION_SECRET;
 }
 
 function getVerificationSecrets(): string[] {
@@ -27,13 +29,22 @@ function getVerificationSecrets(): string[] {
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-  return [
+  const configured = [
     process.env.PLAYER_SESSION_SECRET_CURRENT,
     process.env.PLAYER_SESSION_SECRET,
     process.env.PLAYER_SESSION_PREVIOUS_SECRET,
     ...(fromList ?? []),
-    'dev-player-session-secret-change-me',
   ].filter((secret): secret is string => Boolean(secret));
+
+  if (!isProductionRuntime()) {
+    configured.push(DEV_PLAYER_SESSION_SECRET);
+  }
+
+  return [...new Set(configured)];
+}
+
+function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
 }
 
 function toBase64Url(input: string): string {

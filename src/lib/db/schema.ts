@@ -31,6 +31,7 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -121,6 +122,7 @@ export const coaches = pgTable(
   (t) => [
     index('coaches_program_idx').on(t.programId),
     index('coaches_clerk_user_idx').on(t.clerkUserId),
+    uniqueIndex('coaches_program_clerk_user_uidx').on(t.programId, t.clerkUserId),
   ],
 );
 
@@ -140,6 +142,8 @@ export const players = pgTable(
     // Array — every player can have multiple positions (spec §19 rule 7)
     positions: text('positions').array().notNull().default(sql`ARRAY[]::text[]`),
     grade: varchar('grade', { length: 10 }),
+    // Globally unique by design: player-auth receives only a join code before
+    // program context exists, so codes must not be ambiguous across programs.
     joinCode: varchar('join_code', { length: 8 }).unique(),
     joinCodeExpiresAt: timestamp('join_code_expires_at', { withTimezone: true }),
     status: varchar('status', { length: 20 }).notNull().default('available'),
@@ -234,10 +238,17 @@ export const seasons = pgTable(
     year: integer('year').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('seasons_program_year_idx').on(t.programId, t.year)],
+  (t) => [
+    index('seasons_program_year_idx').on(t.programId, t.year),
+    uniqueIndex('seasons_program_year_uidx').on(t.programId, t.year),
+  ],
 );
 
 // ─── Games ───────────────────────────────────────────────────────
+//
+// No uniqueness constraint on (program_id, opponent_id, played_at): programs
+// can schedule rematches, scrimmages, or placeholder games with null dates.
+// Treat a game row's id as the only stable identity.
 
 export const games = pgTable(
   'games',
@@ -356,11 +367,23 @@ export const plays = pgTable(
       t.quarter,
     ),
     index('plays_program_formation_idx').on(t.programId, t.formation, t.personnel),
+    index('plays_program_game_status_idx').on(t.programId, t.gameId, t.status),
+    index('plays_program_formation_type_situation_idx').on(
+      t.programId,
+      t.formation,
+      t.playType,
+      t.down,
+      t.distanceBucket,
+    ),
     index('plays_status_idx').on(t.status),
   ],
 );
 
 // ─── Prompts (versioned LLM prompts for CV + reasoning) ────────
+//
+// Intentionally global configuration, not tenant data: prompt rows contain
+// task templates/model IDs only and are resolved through withGlobalContext().
+// Do not add program_id or store coach/player/team-specific content here.
 
 export const prompts = pgTable(
   'prompts',
@@ -410,6 +433,12 @@ export const cvTags = pgTable(
   },
   (t) => [
     index('cv_tags_program_play_idx').on(t.programId, t.playId),
+    index('cv_tags_program_play_type_surfaced_idx').on(
+      t.programId,
+      t.playId,
+      t.tagType,
+      t.isSurfaced,
+    ),
     index('cv_tags_type_surfaced_idx').on(t.tagType, t.isSurfaced),
   ],
 );
@@ -560,6 +589,7 @@ export const collectionPlays = pgTable(
   (t) => [
     index('collection_plays_collection_idx').on(t.collectionId),
     index('collection_plays_play_idx').on(t.playId),
+    uniqueIndex('collection_plays_collection_play_uidx').on(t.collectionId, t.playId),
   ],
 );
 

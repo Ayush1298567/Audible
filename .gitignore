@@ -59,3 +59,5 @@ tests/cv-bench/labeled-plays.jsonl
 !.vscode/extensions.json
 *.swp
 *.swo
+.gstack/
+.swc/

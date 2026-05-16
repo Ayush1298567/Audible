@@ -108,6 +108,7 @@ export const sessionPlays = pgTable(
   },
   (t) => [
     index('session_plays_session_idx').on(t.sessionId),
+    index('session_plays_program_session_play_idx').on(t.programId, t.sessionId, t.playId),
   ],
 );
 
@@ -138,6 +139,11 @@ export const playerSessionResults = pgTable(
   (t) => [
     index('player_session_results_session_idx').on(t.sessionId),
     index('player_session_results_player_idx').on(t.playerId),
+    index('player_session_results_program_player_completed_idx').on(
+      t.programId,
+      t.playerId,
+      t.completed,
+    ),
   ],
 );
 
@@ -164,5 +170,6 @@ export const filmGrades = pgTable(
   (t) => [
     index('film_grades_program_play_idx').on(t.programId, t.playId),
     index('film_grades_player_idx').on(t.playerId),
+    index('film_grades_program_player_idx').on(t.programId, t.playerId),
   ],
 );

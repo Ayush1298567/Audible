@@ -34,7 +34,7 @@
       "idx": 4,
       "version": "7",
       "when": 1776213967898,
-      "tag": "0004_chunky_union_jack",
+      "tag": "0004_collections_and_overrides",
       "breakpoints": true
     },
     {
@@ -49,6 +49,27 @@
       "version": "7",
       "when": 1776400000000,
       "tag": "0006_walkthroughs_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778005200000,
+      "tag": "0007_rls_runtime_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778375453000,
+      "tag": "0008_core_constraints_and_read_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778375454000,
+      "tag": "0009_updated_at_triggers",
       "breakpoints": true
     }
   ]

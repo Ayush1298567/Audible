@@ -1,7 +1,7 @@
 import { withProgramContext } from '@/lib/db/client';
 import { players } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
 
@@ -12,6 +12,12 @@ const createPlayerSchema = z.object({
   jerseyNumber: z.number().int().min(0).max(99),
   positions: z.array(z.string().min(1).max(20)).min(1),
   grade: z.string().max(10).optional(),
+});
+
+const updatePlayerSchema = z.object({
+  programId: z.string().uuid(),
+  playerId: z.string().uuid(),
+  action: z.enum(['revokeAccess', 'restoreAccess', 'rotateJoinCode']),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -52,6 +58,53 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: error.status });
     }
     return Response.json({ error: 'Failed to create player' }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request): Promise<Response> {
+  const span = beginSpan({ route: '/api/players', method: 'PATCH' }, req);
+
+  try {
+    const body = await req.json();
+    const input = updatePlayerSchema.parse(body);
+    await requireCoachRoleForProgram('coordinator', input.programId);
+
+    const now = new Date();
+    const patch =
+      input.action === 'revokeAccess'
+        ? { status: 'inactive', updatedAt: now }
+        : input.action === 'restoreAccess'
+          ? { status: 'available', updatedAt: now }
+          : {
+              status: 'available',
+              joinCode: generateJoinCode(),
+              joinCodeExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+              updatedAt: now,
+            };
+
+    const [player] = await withProgramContext(input.programId, async (tx) =>
+      tx
+        .update(players)
+        .set(patch)
+        .where(and(eq(players.id, input.playerId), eq(players.programId, input.programId)))
+        .returning(),
+    );
+
+    if (!player) {
+      return Response.json({ error: 'Player not found' }, { status: 404 });
+    }
+
+    span.done({ playerId: player.id, action: input.action });
+    return Response.json({ player });
+  } catch (error) {
+    span.fail(error);
+    if (error instanceof z.ZodError) {
+      return Response.json({ error: 'Validation failed', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof AuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    return Response.json({ error: 'Failed to update player' }, { status: 500 });
   }
 }
 

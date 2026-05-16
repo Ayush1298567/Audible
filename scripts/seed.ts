@@ -287,102 +287,102 @@ async function seed() {
   if (!program) throw new Error('Failed to create program');
   console.log(`Program: ${program.name} (${program.id})`);
 
-  // Create season
-  const [season] = await db.insert(seasons).values({
-    programId: program.id,
-    year: 2025,
-  }).returning();
-  console.log(`Season: 2025 (${season?.id})`);
-
-  // Create players (no RLS for seed — using db directly)
-  // We need to bypass RLS for seed data
-  await db.execute(sql.raw(`SET LOCAL app.program_id = '${program.id}'`));
-
-  const insertedPlayers = [];
-  for (const p of ROSTER) {
-    const [player] = await db.insert(players).values({
-      programId: program.id,
-      firstName: p.first,
-      lastName: p.last,
-      jerseyNumber: p.jersey,
-      positions: p.pos,
-      grade: p.grade,
-      joinCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
-      joinCodeExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-    }).returning();
-    if (player) insertedPlayers.push(player);
-  }
-  console.log(`Players: ${insertedPlayers.length} added`);
-
-  // Create opponents
-  const insertedOpponents = [];
-  for (const o of OPPONENTS) {
-    const [opp] = await db.insert(opponents).values({
-      programId: program.id,
-      name: o.name,
-      city: o.city,
-      state: o.state,
-    }).returning();
-    if (opp) insertedOpponents.push(opp);
-  }
-  console.log(`Opponents: ${insertedOpponents.length} added`);
-
-  // Create games (4 total — more plays vs Jefferson for richer scouting data)
-  const gameConfigs = [
-    { opponent: insertedOpponents[0]!, isHome: true, playsCount: 65 },
-    { opponent: insertedOpponents[0]!, isHome: false, playsCount: 60 },
-    { opponent: insertedOpponents[1]!, isHome: true, playsCount: 58 },
-    { opponent: insertedOpponents[2]!, isHome: false, playsCount: 55 },
-  ];
-
   let totalPlays = 0;
 
-  for (const gc of gameConfigs) {
-    const weekNum = gameConfigs.indexOf(gc) + 1;
-    const playedAt = new Date(2025, 8, 5 + weekNum * 7); // September Fridays
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.program_id', ${program.id}, true)`);
 
-    const [game] = await db.insert(games).values({
+    // Create season
+    const [season] = await tx.insert(seasons).values({
       programId: program.id,
-      seasonId: season?.id ?? null,
-      opponentId: gc.opponent.id,
-      playedAt,
-      isHome: gc.isHome,
-      ourScore: Math.floor(Math.random() * 28) + 7,
-      opponentScore: Math.floor(Math.random() * 28) + 7,
+      year: 2025,
     }).returning();
+    console.log(`Season: 2025 (${season?.id})`);
 
-    if (!game) continue;
-
-    // Generate and insert plays
-    const gamePlays = generateGamePlays(gc.playsCount);
-
-    for (const p of gamePlays) {
-      await db.insert(plays).values({
+    const insertedPlayers = [];
+    for (const p of ROSTER) {
+      const [player] = await tx.insert(players).values({
         programId: program.id,
-        gameId: game.id,
-        playOrder: p.playOrder,
-        down: p.down,
-        distance: p.distance,
-        distanceBucket: p.distanceBucket,
-        hash: p.hash,
-        yardLine: p.yardLine,
-        fieldZone: p.fieldZone,
-        quarter: p.quarter,
-        scoreDiff: p.scoreDiff,
-        formation: p.formation,
-        personnel: p.personnel,
-        odk: p.odk,
-        playType: p.playType,
-        playDirection: p.playDirection,
-        gainLoss: p.gainLoss,
-        result: p.result,
-        status: 'ready', // Skip CV pipeline for seed data
-      });
+        firstName: p.first,
+        lastName: p.last,
+        jerseyNumber: p.jersey,
+        positions: p.pos,
+        grade: p.grade,
+        joinCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
+        joinCodeExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      }).returning();
+      if (player) insertedPlayers.push(player);
     }
+    console.log(`Players: ${insertedPlayers.length} added`);
 
-    totalPlays += gamePlays.length;
-    console.log(`Game ${weekNum}: vs ${gc.opponent.name} (${gc.isHome ? 'home' : 'away'}) — ${gamePlays.length} plays`);
-  }
+    // Create opponents
+    const insertedOpponents = [];
+    for (const o of OPPONENTS) {
+      const [opp] = await tx.insert(opponents).values({
+        programId: program.id,
+        name: o.name,
+        city: o.city,
+        state: o.state,
+      }).returning();
+      if (opp) insertedOpponents.push(opp);
+    }
+    console.log(`Opponents: ${insertedOpponents.length} added`);
+
+    // Create games (4 total — more plays vs Jefferson for richer scouting data)
+    const gameConfigs = [
+      { opponent: insertedOpponents[0]!, isHome: true, playsCount: 65 },
+      { opponent: insertedOpponents[0]!, isHome: false, playsCount: 60 },
+      { opponent: insertedOpponents[1]!, isHome: true, playsCount: 58 },
+      { opponent: insertedOpponents[2]!, isHome: false, playsCount: 55 },
+    ];
+
+    for (const gc of gameConfigs) {
+      const weekNum = gameConfigs.indexOf(gc) + 1;
+      const playedAt = new Date(2025, 8, 5 + weekNum * 7); // September Fridays
+
+      const [game] = await tx.insert(games).values({
+        programId: program.id,
+        seasonId: season?.id ?? null,
+        opponentId: gc.opponent.id,
+        playedAt,
+        isHome: gc.isHome,
+        ourScore: Math.floor(Math.random() * 28) + 7,
+        opponentScore: Math.floor(Math.random() * 28) + 7,
+      }).returning();
+
+      if (!game) continue;
+
+      // Generate and insert plays
+      const gamePlays = generateGamePlays(gc.playsCount);
+
+      for (const p of gamePlays) {
+        await tx.insert(plays).values({
+          programId: program.id,
+          gameId: game.id,
+          playOrder: p.playOrder,
+          down: p.down,
+          distance: p.distance,
+          distanceBucket: p.distanceBucket,
+          hash: p.hash,
+          yardLine: p.yardLine,
+          fieldZone: p.fieldZone,
+          quarter: p.quarter,
+          scoreDiff: p.scoreDiff,
+          formation: p.formation,
+          personnel: p.personnel,
+          odk: p.odk,
+          playType: p.playType,
+          playDirection: p.playDirection,
+          gainLoss: p.gainLoss,
+          result: p.result,
+          status: 'ready', // Skip CV pipeline for seed data
+        });
+      }
+
+      totalPlays += gamePlays.length;
+      console.log(`Game ${weekNum}: vs ${gc.opponent.name} (${gc.isHome ? 'home' : 'away'}) — ${gamePlays.length} plays`);
+    }
+  });
 
   console.log(`\nTotal: ${totalPlays} plays seeded`);
   console.log(`\nProgram ID: ${program.id}`);

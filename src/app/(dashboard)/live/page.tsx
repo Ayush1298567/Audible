@@ -54,7 +54,7 @@ export default function LiveGamePage() {
   const [down, setDown] = useState(1);
   const [distance, setDistance] = useState(10);
   const [formation, setFormation] = useState<string>('');
-  const [personnel, setPersonnel] = useState<string>('');
+  const [personnel, _setPersonnel] = useState<string>('');
   const [playType, setPlayType] = useState<string>('');
   const [coverage, setCoverage] = useState<string>('');
   const [pressure, setPressure] = useState<string>('');

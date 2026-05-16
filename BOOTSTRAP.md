@@ -4,6 +4,10 @@ This is the step-by-step runbook for taking Audible from "scaffolded files on di
 
 **Estimated time: 45–60 minutes the first time.**
 
+Current Codex sessions must not run Vercel CLI commands. Treat every
+`bunx vercel` or `vercel` command in this file as a later manual human step
+after login; repo-specific deferred Vercel work is tracked in `VERCEL_TODO.md`.
+
 ---
 
 ## Phase A — Your accounts (≈ 15 minutes)
@@ -136,6 +140,16 @@ bunx vercel env pull .env.local
 
 This writes all the Vercel-managed env vars into `.env.local` so `bun run dev` works on your machine. The file is gitignored.
 
+If you are not logged in to Vercel yet, copy `.env.example` to `.env.local`,
+fill the safe local values manually, and run:
+
+```bash
+bun run env:check
+```
+
+The env checker reports only variable names and readiness; it never prints
+secret values.
+
 ---
 
 ## Phase C — First deploy and smoke test (≈ 10 minutes)
@@ -166,23 +180,31 @@ This reads `src/lib/db/schema.ts` and writes `drizzle/0000_<name>.sql`. Review i
 bun run db:migrate
 ```
 
-This applies both `0000_<name>.sql` (tables) and `0001_enable_rls.sql` (RLS policies) to your Neon branch.
+This applies the journaled Drizzle migrations in `drizzle/meta/_journal.json`.
+Current RLS hardening lives in `drizzle/0007_rls_runtime_context.sql`; the older
+`0001_enable_rls.sql` file is legacy reference material and is superseded by the
+journaled runtime-context migration.
 
 ### C3. Run the tests
 
 ```bash
+bun run env:check  # validates required env names without printing values
+bun run verify     # DB-free local pass: migrate check, typecheck, lint, unit,
+                   # eval schemas, build
 bun run typecheck   # passes immediately
 bun run lint        # passes immediately
-bun run test        # runs 33 tests:
-                    #   14 reconcile cases
-                    #   10 CSV parser cases
-                    #   9 XML parser cases
-                    #   (RLS isolation tests skipped — ungated until Phase 1)
+bun run test        # runs fast unit/integration tests
+bun run test:db     # skips with no DATABASE_URL; requires RUN_DB_TESTS=1 when
+                    # a safe Neon branch/local DB is configured
+bun run test:evals  # runs schema/eval checks
 ```
 
 If any unit test fails, that's a real bug — tell me and I'll fix it before anything ships.
 
-### C4. First Vercel deploy
+### C4. First Vercel deploy (manual later)
+
+Do this only after logging in with the intended Vercel account/team. Do not run
+this from a Codex session while Vercel access is deferred.
 
 ```bash
 bunx vercel deploy
@@ -274,6 +296,6 @@ Most bootstrap errors fall into these buckets:
 | `vercel deploy` builds locally but fails on Vercel | Env var missing in Vercel | Run `bunx vercel env pull .env.local` and compare with the Vercel dashboard |
 | Health check returns 404 | App Router path mismatch | The route file should be at `src/app/api/health/route.ts` exactly |
 | Clerk middleware error on first page load | Middleware not yet wired | Normal — we haven't enabled Clerk auth yet, Phase 1 does this |
-| RLS tests fail with "relation does not exist" | Migration 0001 didn't run | Run `bun run db:migrate` explicitly |
+| RLS tests fail with "relation does not exist" | Journaled migrations were not applied | Run `bun run db:migrate` explicitly |
 
 For anything not in this list, paste the error and I'll walk through it.

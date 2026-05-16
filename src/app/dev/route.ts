@@ -1,5 +1,6 @@
-import { db } from '@/lib/db/client';
+import { db, withProgramContext } from '@/lib/db/client';
 import { programs, seasons, players, opponents, games, plays, coaches, playbookPlays, gamePlans } from '@/lib/db/schema';
+import { beginSpan } from '@/lib/observability/log';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -15,14 +16,19 @@ import { eq } from 'drizzle-orm';
 
 // Weighted random pick
 function pick<T>(items: T[], weights?: number[]): T {
-  if (!weights) return items[Math.floor(Math.random() * items.length)]!;
+  const fallback = items[0];
+  if (fallback === undefined) {
+    throw new Error('pick requires at least one item');
+  }
+
+  if (!weights) return items[Math.floor(Math.random() * items.length)] ?? fallback;
   const total = weights.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < items.length; i++) {
-    r -= weights[i]!;
-    if (r <= 0) return items[i]!;
+    r -= weights[i] ?? 0;
+    if (r <= 0) return items[i] ?? fallback;
   }
-  return items[items.length - 1]!;
+  return items.at(-1) ?? fallback;
 }
 
 function randInt(min: number, max: number) {
@@ -44,7 +50,7 @@ interface PlaySeed {
   motion: string | null;
 }
 
-function generateJeffersonPlay(i: number): PlaySeed {
+function generateJeffersonPlay(_i: number): PlaySeed {
   const down = pick([1, 2, 3, 4], [35, 30, 30, 5]);
   const distance = down === 1 ? 10 : down === 3 ? pick([2, 5, 8, 12], [20, 30, 30, 20]) : randInt(3, 10);
   const is3rdLong = down === 3 && distance >= 7;
@@ -77,7 +83,7 @@ function generateJeffersonPlay(i: number): PlaySeed {
   return { down, distance, quarter, formation, personnel: personnel12, playType, playDirection, gainLoss, result, coverage, pressure, motion };
 }
 
-function generateRooseveltPlay(i: number): PlaySeed {
+function generateRooseveltPlay(_i: number): PlaySeed {
   const down = pick([1, 2, 3, 4], [35, 30, 30, 5]);
   const distance = down === 1 ? 10 : down === 3 ? pick([2, 5, 8, 12], [25, 25, 25, 25]) : randInt(3, 10);
   const quarter = pick([1, 2, 3, 4], [25, 25, 25, 25]);
@@ -104,47 +110,60 @@ function generateRooseveltPlay(i: number): PlaySeed {
 }
 
 export async function GET(req: Request): Promise<Response> {
+  const span = beginSpan({ route: '/dev', method: 'GET' }, req);
+
+  try {
   const url = new URL(req.url);
   const reset = url.searchParams.get('reset') === '1';
-
-  // If reset, delete all plays first
-  if (reset) {
-    await db.delete(plays);
-  }
-
-  // Check if plays already exist (don't re-seed)
-  const existingPlays = await db.select({ id: plays.id }).from(plays).limit(1);
 
   let programId: string;
   let programName: string;
 
   const existingProgram = await db.select({ id: programs.id, name: programs.name }).from(programs).limit(1);
 
-  if (existingProgram[0] && existingPlays[0]) {
-    // Already seeded — just redirect
+  if (existingProgram[0]) {
     programId = existingProgram[0].id;
     programName = existingProgram[0].name;
   } else {
-    // Get or create program
-    if (existingProgram[0]) {
-      programId = existingProgram[0].id;
-      programName = existingProgram[0].name;
-    } else {
-      const [program] = await db.insert(programs).values({
-        name: 'Lincoln High Football',
-        level: 'hs',
-        city: 'Lincoln',
-        state: 'TX',
-        clerkOrgId: `dev_${Date.now()}`,
-      }).returning();
-      if (!program) throw new Error('Failed to create program');
-      programId = program.id;
-      programName = program.name;
+    const [program] = await db.insert(programs).values({
+      name: 'Lincoln High Football',
+      level: 'hs',
+      city: 'Lincoln',
+      state: 'TX',
+      clerkOrgId: `dev_${Date.now()}`,
+    }).returning();
+    if (!program) throw new Error('Failed to create program');
+    programId = program.id;
+    programName = program.name;
+  }
 
-      // Season
-      await db.insert(seasons).values({ programId, year: 2026 });
+  await withProgramContext(programId, async (tx) => {
+    if (reset) {
+      await tx.delete(plays).where(eq(plays.programId, programId));
+    }
 
-      // Players
+    const existingPlays = await tx
+      .select({ id: plays.id })
+      .from(plays)
+      .where(eq(plays.programId, programId))
+      .limit(1);
+    if (existingPlays[0]) return;
+
+    const existingSeasons = await tx
+      .select({ id: seasons.id })
+      .from(seasons)
+      .where(eq(seasons.programId, programId))
+      .limit(1);
+    if (!existingSeasons[0]) {
+      await tx.insert(seasons).values({ programId, year: 2026 });
+    }
+
+    const existingPlayers = await tx
+      .select({ id: players.id })
+      .from(players)
+      .where(eq(players.programId, programId))
+      .limit(1);
+    if (!existingPlayers[0]) {
       const roster = [
         { firstName: 'Marcus', lastName: 'Williams', jerseyNumber: 7, positions: ['QB'], grade: 'SR' },
         { firstName: 'Jaylen', lastName: 'Carter', jerseyNumber: 2, positions: ['RB'], grade: 'JR' },
@@ -158,7 +177,7 @@ export async function GET(req: Request): Promise<Response> {
         { firstName: 'Tyler', lastName: 'Davis', jerseyNumber: 44, positions: ['DL'], grade: 'SR' },
       ];
       for (const p of roster) {
-        await db.insert(players).values({
+        await tx.insert(players).values({
           programId,
           ...p,
           joinCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
@@ -168,24 +187,34 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     // Create opponents if needed
-    const existingOpps = await db.select({ id: opponents.id }).from(opponents).where(eq(opponents.programId, programId));
+    const existingOpps = await tx.select({ id: opponents.id }).from(opponents).where(eq(opponents.programId, programId));
     let jeffersonId: string;
     let rooseveltId: string;
 
     if (existingOpps.length >= 2) {
-      jeffersonId = existingOpps[0]!.id;
-      rooseveltId = existingOpps[1]!.id;
+      const jefferson = existingOpps[0];
+      const roosevelt = existingOpps[1];
+      if (!jefferson || !roosevelt) {
+        throw new Error('Expected two existing opponents');
+      }
+      jeffersonId = jefferson.id;
+      rooseveltId = roosevelt.id;
     } else {
-      const opps = await db.insert(opponents).values([
+      const opps = await tx.insert(opponents).values([
         { programId, name: 'Jefferson Eagles', city: 'Jefferson', state: 'TX' },
         { programId, name: 'Roosevelt Panthers', city: 'Roosevelt', state: 'TX' },
       ]).returning();
-      jeffersonId = opps[0]!.id;
-      rooseveltId = opps[1]!.id;
+      const jefferson = opps[0];
+      const roosevelt = opps[1];
+      if (!jefferson || !roosevelt) {
+        throw new Error('Failed to create dev opponents');
+      }
+      jeffersonId = jefferson.id;
+      rooseveltId = roosevelt.id;
     }
 
     // Create games if needed
-    const existingGames = await db.select({ id: games.id, opponentId: games.opponentId }).from(games).where(eq(games.programId, programId));
+    const existingGames = await tx.select({ id: games.id, opponentId: games.opponentId }).from(games).where(eq(games.programId, programId));
     let jeffersonGames: string[] = [];
     let rooseveltGames: string[] = [];
 
@@ -196,13 +225,19 @@ export async function GET(req: Request): Promise<Response> {
       }
     } else {
       // 2 games vs Jefferson, 1 vs Roosevelt
-      const g1 = await db.insert(games).values([
+      const g1 = await tx.insert(games).values([
         { programId, opponentId: jeffersonId, playedAt: new Date(2026, 8, 5), isHome: true, ourScore: 28, opponentScore: 21 },
         { programId, opponentId: jeffersonId, playedAt: new Date(2026, 8, 12), isHome: false, ourScore: 14, opponentScore: 17 },
         { programId, opponentId: rooseveltId, playedAt: new Date(2026, 8, 19), isHome: true, ourScore: 35, opponentScore: 14 },
       ]).returning();
-      jeffersonGames = [g1[0]!.id, g1[1]!.id];
-      rooseveltGames = [g1[2]!.id];
+      const jeffersonOne = g1[0];
+      const jeffersonTwo = g1[1];
+      const rooseveltOne = g1[2];
+      if (!jeffersonOne || !jeffersonTwo || !rooseveltOne) {
+        throw new Error('Failed to create dev games');
+      }
+      jeffersonGames = [jeffersonOne.id, jeffersonTwo.id];
+      rooseveltGames = [rooseveltOne.id];
     }
 
     // Seed plays — 35 vs Jefferson (across 2 games), 30 vs Roosevelt
@@ -211,6 +246,7 @@ export async function GET(req: Request): Promise<Response> {
     for (let i = 0; i < 35; i++) {
       const p = generateJeffersonPlay(i);
       const gameId = i < 18 ? jeffersonGames[0] : jeffersonGames[1] ?? jeffersonGames[0];
+      if (!gameId) throw new Error('Missing Jefferson dev game');
       const distBucket = p.distance <= 3 ? 'short' : p.distance <= 6 ? 'medium' : 'long';
       playValues.push({
         programId,
@@ -242,6 +278,7 @@ export async function GET(req: Request): Promise<Response> {
     for (let i = 0; i < 30; i++) {
       const p = generateRooseveltPlay(i);
       const gameId = rooseveltGames[0];
+      if (!gameId) throw new Error('Missing Roosevelt dev game');
       const distBucket = p.distance <= 3 ? 'short' : p.distance <= 6 ? 'medium' : 'long';
       playValues.push({
         programId,
@@ -272,13 +309,13 @@ export async function GET(req: Request): Promise<Response> {
 
     // Insert all plays
     for (const pv of playValues) {
-      await db.insert(plays).values(pv as typeof plays.$inferInsert);
+      await tx.insert(plays).values(pv as typeof plays.$inferInsert);
     }
 
     // Seed coach (dev user as head coach)
-    const existingCoaches = await db.select({ id: coaches.id }).from(coaches).where(eq(coaches.programId, programId));
+    const existingCoaches = await tx.select({ id: coaches.id }).from(coaches).where(eq(coaches.programId, programId));
     if (existingCoaches.length === 0) {
-      await db.insert(coaches).values({
+      await tx.insert(coaches).values({
         programId,
         clerkUserId: 'dev-user',
         email: 'coach@lincoln-high.dev',
@@ -289,7 +326,7 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     // Seed playbook (the coach's actual plays)
-    const existingPlaybook = await db.select({ id: playbookPlays.id }).from(playbookPlays).where(eq(playbookPlays.programId, programId));
+    const existingPlaybook = await tx.select({ id: playbookPlays.id }).from(playbookPlays).where(eq(playbookPlays.programId, programId));
     if (existingPlaybook.length === 0) {
       const pbPlays = [
         { name: 'Inside Zone', formation: 'Singleback', playType: 'run', personnel: '11', situationTags: ['1st down', 'red zone'] },
@@ -309,20 +346,20 @@ export async function GET(req: Request): Promise<Response> {
         { name: 'HB Toss', formation: 'Pistol', playType: 'run', personnel: '11', situationTags: ['1st down'] },
       ];
       for (const p of pbPlays) {
-        await db.insert(playbookPlays).values({ programId, ...p });
+        await tx.insert(playbookPlays).values({ programId, ...p });
       }
     }
 
     // Seed a game plan for this week's opponent (Jefferson)
-    const existingPlans = await db.select({ id: gamePlans.id }).from(gamePlans).where(eq(gamePlans.programId, programId));
+    const existingPlans = await tx.select({ id: gamePlans.id }).from(gamePlans).where(eq(gamePlans.programId, programId));
     if (existingPlans.length === 0) {
-      await db.insert(gamePlans).values({
+      await tx.insert(gamePlans).values({
         programId,
         opponentId: jeffersonId,
         weekLabel: 'Week 4 vs Jefferson',
       });
     }
-  }
+  });
 
   const html = `<!DOCTYPE html>
 <html><head><title>Dev Bypass</title></head>
@@ -339,5 +376,10 @@ window.location.href='/hub';
 </div>
 </body></html>`;
 
+  span.done({ programId, reset });
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+  } catch (error) {
+    span.fail(error);
+    return Response.json({ error: 'Failed to seed dev data' }, { status: 500 });
+  }
 }

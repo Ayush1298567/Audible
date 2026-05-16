@@ -120,4 +120,38 @@ describe('GET /api/player-data auth guardrails', () => {
       error: 'Session invalidated; please rejoin',
     });
   });
+
+  it('returns 401 when join-code expiry changed after token issue', async () => {
+    verifyPlayerSessionTokenMock.mockReturnValue({
+      playerId: '22222222-2222-2222-2222-222222222222',
+      programId: '11111111-1111-1111-1111-111111111111',
+      iat: 1,
+      exp: 9999999999,
+      playerUpdatedAt: new Date('2026-01-01T00:00:00.000Z').toISOString(),
+      joinCodeExpiresAt: new Date('2026-02-01T00:00:00.000Z').toISOString(),
+    });
+    withProgramContextMock.mockResolvedValueOnce([
+      {
+        id: '22222222-2222-2222-2222-222222222222',
+        positions: ['QB'],
+        status: 'available',
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        joinCodeExpiresAt: new Date('2026-03-01T00:00:00.000Z'),
+      },
+    ]);
+
+    const { GET } = await import('@/app/api/player-data/route');
+    const req = new Request(
+      'http://localhost/api/player-data?programId=11111111-1111-1111-1111-111111111111&playerId=22222222-2222-2222-2222-222222222222&type=progress',
+      {
+        headers: { 'x-player-token': 'token' },
+      },
+    );
+
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'Session invalidated; please rejoin',
+    });
+  });
 });

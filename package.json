@@ -14,14 +14,17 @@
     "test:watch": "vitest",
     "test:evals": "vitest run --config vitest.evals.config.ts",
     "test:cv": "vitest run --config vitest.cv.config.ts",
-    "test:db": "vitest run tests/integration/db",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "test:e2e": "playwright test",
     "bench:cv-accuracy": "bun run tests/bench/cv-accuracy/run-bench.ts",
     "bench:pbp": "bun run tests/bench/pbp-validation/run-bench.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "ci": "bun run typecheck && bun run lint && bun run test && bun run test:evals"
+    "env:check": "bun run scripts/check-env.ts",
+    "migrate:check": "bun run scripts/check-migrations.ts",
+    "verify": "bun run migrate:check && bun run typecheck && bun run lint && bun run test && bun run test:evals && bun run build",
+    "ci": "bun run migrate:check && bun run typecheck && bun run lint && bun run test && bun run test:db && bun run test:evals"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.0",

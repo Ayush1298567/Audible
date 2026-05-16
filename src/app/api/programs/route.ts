@@ -6,13 +6,15 @@ import { coaches, programs, seasons, plays } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { AuthError, requireHeadCoach } from '@/lib/auth/guards';
 
+type ProgramRow = typeof programs.$inferSelect;
+
 // ─── GET: current Clerk org's program + play count ─────────────
 
 export async function GET(req: Request): Promise<Response> {
   const span = beginSpan({ route: '/api/programs', method: 'GET' }, req);
 
   try {
-    let program;
+    let program: ProgramRow | undefined;
 
     if (process.env.DEV_BYPASS_AUTH === '1') {
       // Dev mode: return the first program in the DB

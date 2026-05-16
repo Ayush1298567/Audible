@@ -6,6 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ProgramProvider, useProgram } from '@/lib/auth/program-context';
+import {
+  parseRosterCsv,
+  type RosterCsvParseResult,
+  type RosterCsvPlayer,
+} from '@/lib/setup/roster-csv';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -15,13 +20,7 @@ interface ProgramData {
   seasonId: string;
 }
 
-interface RosterPlayer {
-  firstName: string;
-  lastName: string;
-  jerseyNumber: number;
-  positions: string[];
-  grade?: string;
-}
+type RosterPlayer = RosterCsvPlayer;
 
 interface ScheduleGame {
   opponentName: string;
@@ -294,6 +293,13 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [csvParsing, setCsvParsing] = useState(false);
+  const [pendingCsv, setPendingCsv] = useState<RosterCsvParseResult | null>(null);
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [manualJerseyNumber, setManualJerseyNumber] = useState<number | null>(null);
+
+  const manualJerseyDuplicate =
+    manualJerseyNumber !== null &&
+    players.find((player) => player.jerseyNumber === manualJerseyNumber);
 
   async function handleAddPlayer(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -323,6 +329,7 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
 
       setPlayers((prev) => [...prev, player]);
       e.currentTarget.reset();
+      setManualJerseyNumber(null);
       // Re-focus first name for quick entry
       (e.currentTarget.querySelector('#firstName') as HTMLInputElement)?.focus();
     } catch (err) {
@@ -343,23 +350,15 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const parsed = parseCsvRoster(text);
-        if (parsed.length === 0) {
-          throw new Error('No valid players found in CSV. Expected columns: FirstName, LastName, Jersey, Position');
-        }
+        const parsed = parseRosterCsv(text, {
+          existingJerseyNumbers: players.map((player) => player.jerseyNumber),
+        });
+        setPendingCsv(parsed);
 
-        // Save all parsed players
-        const saved: RosterPlayer[] = [];
-        for (const player of parsed) {
-          const res = await fetch('/api/players', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...player, programId }),
-          });
-          if (res.ok) saved.push(player);
+        if (parsed.players.length === 0) {
+          const firstError = parsed.issues.find((issue) => issue.severity === 'error');
+          throw new Error(firstError?.message ?? 'No valid players found in CSV.');
         }
-
-        setPlayers((prev) => [...prev, ...saved]);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to parse CSV');
       } finally {
@@ -367,6 +366,42 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
       }
     };
     reader.readAsText(file);
+  }
+
+  async function handleImportCsv() {
+    if (!pendingCsv || pendingCsv.players.length === 0) return;
+
+    setIsImportingCsv(true);
+    setError(null);
+
+    const saved: RosterPlayer[] = [];
+    const failed: string[] = [];
+
+    for (const player of pendingCsv.players) {
+      const res = await fetch('/api/players', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...player, programId }),
+      });
+
+      if (res.ok) {
+        saved.push(player);
+      } else {
+        const data = await res.json().catch(() => null);
+        failed.push(`${player.firstName} ${player.lastName}: ${data?.error ?? 'not imported'}`);
+      }
+    }
+
+    if (saved.length > 0) {
+      setPlayers((prev) => [...prev, ...saved]);
+      setPendingCsv(null);
+    }
+
+    if (failed.length > 0) {
+      setError(`Imported ${saved.length}; ${failed.length} failed. ${failed.slice(0, 2).join(' ')}`);
+    }
+
+    setIsImportingCsv(false);
   }
 
   return (
@@ -405,6 +440,87 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
         </label>
       </div>
 
+      {pendingCsv && (
+        <div className="rounded-xl border border-border/50 bg-white/[0.025] p-4 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-xs uppercase tracking-widest text-foreground">
+                CSV Preview
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {pendingCsv.players.length} importable player{pendingCsv.players.length !== 1 ? 's' : ''}
+                {pendingCsv.issues.length > 0 && ` · ${pendingCsv.issues.length} issue${pendingCsv.issues.length !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+            {pendingCsv.duplicateJerseyNumbers.length > 0 && (
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-display text-[10px] uppercase tracking-widest text-amber-300">
+                Duplicate #{pendingCsv.duplicateJerseyNumbers.join(', #')}
+              </span>
+            )}
+          </div>
+
+          {pendingCsv.issues.length > 0 && (
+            <div className="max-h-28 overflow-y-auto space-y-1 rounded-lg border border-white/[0.04] bg-black/10 p-2">
+              {pendingCsv.issues.slice(0, 6).map((issue, index) => (
+                <p
+                  key={`${issue.row ?? 'file'}-${index}`}
+                  className={`text-xs ${issue.severity === 'warning' ? 'text-amber-300' : 'text-destructive'}`}
+                >
+                  {issue.message}
+                </p>
+              ))}
+              {pendingCsv.issues.length > 6 && (
+                <p className="text-xs text-muted-foreground">
+                  +{pendingCsv.issues.length - 6} more issue{pendingCsv.issues.length - 6 !== 1 ? 's' : ''}
+                </p>
+              )}
+            </div>
+          )}
+
+          {pendingCsv.players.length > 0 && (
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {pendingCsv.players.slice(0, 6).map((player, index) => (
+                <div
+                  key={`${player.jerseyNumber}-${player.firstName}-${player.lastName}-${index}`}
+                  className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5 text-xs"
+                >
+                  <span className="font-display font-bold text-primary">#{player.jerseyNumber}</span>
+                  <span className="truncate text-foreground">
+                    {player.firstName} {player.lastName}
+                  </span>
+                  <span className="ml-auto text-muted-foreground">{player.positions.join('/')}</span>
+                </div>
+              ))}
+              {pendingCsv.players.length > 6 && (
+                <div className="rounded-lg bg-white/[0.02] px-2 py-1.5 text-xs text-muted-foreground">
+                  +{pendingCsv.players.length - 6} more
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="flex-1 h-9 font-display text-xs uppercase tracking-widest"
+              onClick={() => setPendingCsv(null)}
+              disabled={isImportingCsv}
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              className="flex-1 h-9 font-display text-xs uppercase tracking-widest"
+              onClick={() => void handleImportCsv()}
+              disabled={pendingCsv.players.length === 0 || isImportingCsv}
+            >
+              {isImportingCsv ? 'Importing...' : `Import ${pendingCsv.players.length}`}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Manual add form */}
       <form onSubmit={handleAddPlayer} className="space-y-3">
         <div className="grid grid-cols-6 gap-2">
@@ -433,6 +549,10 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
               min={0}
               max={99}
               required
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                setManualJerseyNumber(value === '' ? null : Number(value));
+              }}
               className="h-10 bg-white/[0.03] border-border/50 focus:border-primary/50 text-sm placeholder:text-muted-foreground/40"
             />
           </div>
@@ -473,6 +593,14 @@ function StepRoster({ programId, onDone }: { programId: string; onDone: (players
           </div>
         </div>
       </form>
+
+      {manualJerseyDuplicate && (
+        <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+          <p className="text-xs text-amber-300">
+            Jersey #{manualJerseyNumber} is already assigned to {manualJerseyDuplicate.firstName} {manualJerseyDuplicate.lastName}.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
@@ -732,49 +860,6 @@ function StepDone({ programName, playerCount, gameCount, onFinish }: {
       </div>
     </div>
   );
-}
-
-// ─── CSV Parser ─────────────────────────────────────────────────
-
-function parseCsvRoster(text: string): RosterPlayer[] {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return [];
-
-  const headerLine = lines[0];
-  if (!headerLine) return [];
-  const header = headerLine.toLowerCase().split(',').map((h) => h.trim());
-  const firstNameIdx = header.findIndex((h) => h.includes('first'));
-  const lastNameIdx = header.findIndex((h) => h.includes('last'));
-  const jerseyIdx = header.findIndex((h) => h.includes('jersey') || h.includes('number') || h === '#');
-  const posIdx = header.findIndex((h) => h.includes('pos'));
-  const gradeIdx = header.findIndex((h) => h.includes('grade') || h.includes('year') || h.includes('class'));
-
-  if (firstNameIdx === -1 || lastNameIdx === -1 || jerseyIdx === -1) return [];
-
-  const players: RosterPlayer[] = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    const cols = line.split(',').map((c) => c.trim());
-    const firstName = cols[firstNameIdx];
-    const lastName = cols[lastNameIdx];
-    const jersey = Number(cols[jerseyIdx]);
-
-    if (!firstName || !lastName || Number.isNaN(jersey)) continue;
-
-    const position = posIdx !== -1 && cols[posIdx] ? cols[posIdx].toUpperCase() : 'ATH';
-
-    players.push({
-      firstName,
-      lastName,
-      jerseyNumber: jersey,
-      positions: [position],
-      grade: gradeIdx !== -1 ? cols[gradeIdx] || undefined : undefined,
-    });
-  }
-
-  return players;
 }
 
 // ─── Page ───────────────────────────────────────────────────────

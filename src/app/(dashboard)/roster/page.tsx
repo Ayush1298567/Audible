@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Ban, KeyRound, ShieldCheck } from 'lucide-react';
 import { useProgram } from '@/lib/auth/program-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,6 +50,14 @@ export default function RosterPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [staffDialogOpen, setStaffDialogOpen] = useState(false);
+  const [busyPlayerAction, setBusyPlayerAction] = useState<string | null>(null);
+  const [addPlayerJerseyNumber, setAddPlayerJerseyNumber] = useState<number | null>(null);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
+
+  const duplicateJerseyPlayer =
+    addPlayerJerseyNumber !== null
+      ? players.find((player) => player.jerseyNumber === addPlayerJerseyNumber)
+      : undefined;
 
   const loadPlayers = useCallback(async () => {
     if (!programId) return;
@@ -74,6 +83,9 @@ export default function RosterPage() {
 
   async function handleAddPlayer(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!programId) return;
+
+    setAddPlayerError(null);
     const form = new FormData(e.currentTarget);
     const positionsRaw = (form.get('positions') as string) || '';
 
@@ -94,7 +106,33 @@ export default function RosterPage() {
 
     if (res.ok) {
       setDialogOpen(false);
+      setAddPlayerJerseyNumber(null);
       void loadPlayers();
+    } else {
+      const data = await res.json().catch(() => null);
+      setAddPlayerError(data?.error ?? 'Failed to add player');
+    }
+  }
+
+  async function handlePlayerAction(
+    playerId: string,
+    action: 'revokeAccess' | 'restoreAccess' | 'rotateJoinCode',
+  ) {
+    if (!programId) return;
+
+    setBusyPlayerAction(`${playerId}:${action}`);
+    try {
+      const res = await fetch('/api/players', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ programId, playerId, action }),
+      });
+
+      if (res.ok) {
+        await loadPlayers();
+      }
+    } finally {
+      setBusyPlayerAction(null);
     }
   }
 
@@ -115,7 +153,16 @@ export default function RosterPage() {
           </p>
         </div>
 
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog
+          open={dialogOpen}
+          onOpenChange={(open) => {
+            setDialogOpen(open);
+            if (!open) {
+              setAddPlayerJerseyNumber(null);
+              setAddPlayerError(null);
+            }
+          }}
+        >
           <DialogTrigger className={`${buttonVariants()} glow-blue`}>
             + Add Player
           </DialogTrigger>
@@ -163,8 +210,17 @@ export default function RosterPage() {
                     min={0}
                     max={99}
                     required
+                    onChange={(e) => {
+                      const value = e.currentTarget.value;
+                      setAddPlayerJerseyNumber(value === '' ? null : Number(value));
+                    }}
                     className="bg-white/[0.03] border-border/50 focus:border-primary/50 font-display font-bold"
                   />
+                  {duplicateJerseyPlayer && (
+                    <p className="text-xs text-amber-300">
+                      #{addPlayerJerseyNumber} is already assigned to {duplicateJerseyPlayer.firstName} {duplicateJerseyPlayer.lastName}.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="grade" className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
@@ -190,6 +246,11 @@ export default function RosterPage() {
                   className="bg-white/[0.03] border-border/50 focus:border-primary/50"
                 />
               </div>
+              {addPlayerError && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
+                  <p className="text-sm text-destructive">{addPlayerError}</p>
+                </div>
+              )}
               <Button type="submit" className="w-full glow-blue">
                 Add Player
               </Button>
@@ -236,51 +297,91 @@ export default function RosterPage() {
                     <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Positions</TableHead>
                     <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Grade</TableHead>
                     <TableHead className="text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Join Code</TableHead>
-                    <TableHead className="w-20 text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Status</TableHead>
+                    <TableHead className="w-24 text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Access</TableHead>
+                    <TableHead className="w-24 text-right text-xs font-medium uppercase tracking-widest text-muted-foreground/70">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {groupPlayers.map((player) => (
-                    <TableRow
-                      key={player.id}
-                      className="border-border/20 hover:bg-white/[0.03] transition-colors"
-                    >
-                      <TableCell>
-                        <span className="font-display font-bold text-lg text-foreground/90">
-                          {player.jerseyNumber}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-medium text-foreground">
-                          {player.firstName} {player.lastName}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {player.positions.map((pos) => (
-                            <span key={pos} className="tag-chip tag-info">
-                              {pos}
-                            </span>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {player.grade ?? <span className="text-muted-foreground/40">—</span>}
-                      </TableCell>
-                      <TableCell>
-                        {player.joinCode ? (
-                          <span className="font-mono text-xs rounded px-2 py-0.5 bg-white/[0.04] border border-border/40 text-cyan-400 tracking-wider">
-                            {player.joinCode}
+                  {groupPlayers.map((player) => {
+                    const accessRevoked = player.status !== 'available';
+                    const accessAction = accessRevoked ? 'restoreAccess' : 'revokeAccess';
+                    const playerBusy = busyPlayerAction?.startsWith(`${player.id}:`) ?? false;
+
+                    return (
+                      <TableRow
+                        key={player.id}
+                        className="border-border/20 hover:bg-white/[0.03] transition-colors"
+                      >
+                        <TableCell>
+                          <span className="font-display font-bold text-lg text-foreground/90">
+                            {player.jerseyNumber}
                           </span>
-                        ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-success" />
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-medium text-foreground">
+                            {player.firstName} {player.lastName}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {player.positions.map((pos) => (
+                              <span key={pos} className="tag-chip tag-info">
+                                {pos}
+                              </span>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {player.grade ?? <span className="text-muted-foreground/40">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {player.joinCode ? (
+                            <span className="font-mono text-xs rounded px-2 py-0.5 bg-white/[0.04] border border-border/40 text-cyan-400 tracking-wider">
+                              {player.joinCode}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span
+                              className={`inline-block h-2 w-2 rounded-full ${accessRevoked ? 'bg-destructive' : 'bg-success'}`}
+                            />
+                            {accessRevoked ? 'Revoked' : 'Active'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              title={accessRevoked ? 'Restore access' : 'Revoke access'}
+                              aria-label={`${accessRevoked ? 'Restore' : 'Revoke'} access for ${player.firstName} ${player.lastName}`}
+                              disabled={playerBusy}
+                              onClick={() => void handlePlayerAction(player.id, accessAction)}
+                              className={accessRevoked ? 'text-emerald-400' : 'text-red-400'}
+                            >
+                              {accessRevoked ? <ShieldCheck /> : <Ban />}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              title="Rotate join code"
+                              aria-label={`Rotate join code for ${player.firstName} ${player.lastName}`}
+                              disabled={playerBusy}
+                              onClick={() => void handlePlayerAction(player.id, 'rotateJoinCode')}
+                              className="text-cyan-400"
+                            >
+                              <KeyRound />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

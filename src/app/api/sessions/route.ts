@@ -1,10 +1,11 @@
 import { withProgramContext } from '@/lib/db/client';
-import { sessions, sessionPlays, playerSessionResults, plays, games } from '@/lib/db/schema';
+import { sessions, sessionPlays, playerSessionResults, plays, games, players } from '@/lib/db/schema';
 import { beginSpan } from '@/lib/observability/log';
 import { eq, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { generateText, Output, gateway } from 'ai';
 import { AuthError, requireCoachForProgram, requireCoachRoleForProgram } from '@/lib/auth/guards';
+import { verifyPlayerSessionToken } from '@/lib/auth/player-token';
 
 const createSchema = z.object({
   programId: z.string().uuid(),
@@ -198,6 +199,48 @@ Select 8-12 plays that best match the coach's focus. Return the play indices, a 
 
       case 'submitResult': {
         const input = submitResultSchema.parse(body);
+        const token = req.headers.get('x-player-token');
+        if (!token) {
+          return Response.json({ error: 'Missing player session token' }, { status: 401 });
+        }
+
+        const claims = verifyPlayerSessionToken(token);
+        if (!claims) {
+          return Response.json({ error: 'Invalid or expired player token' }, { status: 401 });
+        }
+        if (claims.playerId !== input.playerId || claims.programId !== input.programId) {
+          return Response.json({ error: 'Forbidden: token scope mismatch' }, { status: 403 });
+        }
+
+        const [player] = await withProgramContext(input.programId, async (tx) =>
+          tx
+            .select({
+              id: players.id,
+              status: players.status,
+              updatedAt: players.updatedAt,
+              joinCodeExpiresAt: players.joinCodeExpiresAt,
+            })
+            .from(players)
+            .where(and(eq(players.id, input.playerId), eq(players.programId, input.programId)))
+            .limit(1),
+        );
+
+        if (!player) {
+          return Response.json({ error: 'Player not found in this program' }, { status: 404 });
+        }
+        if (player.status !== 'available') {
+          return Response.json({ error: 'Player access revoked' }, { status: 403 });
+        }
+        if (player.updatedAt.toISOString() !== claims.playerUpdatedAt) {
+          return Response.json({ error: 'Session invalidated; please rejoin' }, { status: 401 });
+        }
+        const currentJoinCodeExpiry = player.joinCodeExpiresAt
+          ? player.joinCodeExpiresAt.toISOString()
+          : null;
+        if (currentJoinCodeExpiry !== claims.joinCodeExpiresAt) {
+          return Response.json({ error: 'Session invalidated; please rejoin' }, { status: 401 });
+        }
+
         const accuracy = input.totalQuestions > 0
           ? input.correctAnswers / input.totalQuestions
           : 0;

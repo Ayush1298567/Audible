@@ -13,7 +13,7 @@
  * Import from db/schema.ts which re-exports these.
  */
 
-import { index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 import { programs, gamePlans, playbookPlays, opponents } from './schema';
 
 // ─── Game plan plays (plays assigned to situation columns) ──
@@ -74,6 +74,11 @@ export const gamePlanAssignments = pgTable(
   (t) => [
     index('game_plan_assignments_plan_idx').on(t.gamePlanId),
     index('game_plan_assignments_program_idx').on(t.programId),
+    uniqueIndex('game_plan_assignments_plan_position_situation_uidx').on(
+      t.gamePlanId,
+      t.positionGroup,
+      t.situation,
+    ),
   ],
 );
 

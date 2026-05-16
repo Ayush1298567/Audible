@@ -21,7 +21,7 @@ const isPublicRoute = createRouteMatcher([
   '/_next(.*)',
 ]);
 
-function devProxy(request: NextRequest) {
+function devProxy(_request: NextRequest) {
   const response = NextResponse.next();
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');

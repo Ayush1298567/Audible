@@ -70,6 +70,7 @@ export function ProgramProvider({ children }: { children: ReactNode }) {
   // Fetch the program from the server. The API is Clerk-gated and
   // returns programs for the authenticated user. Works with or without
   // Clerk Organizations enabled.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchKey intentionally retriggers refresh().
   useEffect(() => {
     let cancelled = false;
 
